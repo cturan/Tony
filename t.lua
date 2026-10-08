@@ -5831,7 +5831,7 @@ local function fail(s)
   error(s:match(':%d+: ') and s or (at[1]..':'..at[2]..': '..s),0)
 end
 if path=='--help' or path=='-h' then
-  print('T 0.8: lua derleyici/t.lua kaynak.t --arch macos|windows|linux --cpu arm64|x86_64 --instruction auto|scalar|neon|sse2|avx|avx2|avx512|avx512bw --arka yeni|eski --avx512 evet|hayır --avx-vnni evet|hayır --opt 0|2 --gom dosya --output dosya')
+  print('T 0.8: lua derleyici/t.lua kaynak.t --arch macos|windows|linux --cpu arm64|x86_64 --instruction auto|scalar|neon|sse2|avx|avx2|avx512|avx512bw --arka yeni|eski --avx512 evet|hayır --avx-vnni evet|hayır --opt 0|2 --gom dosya --pgo girdi --output dosya')
   return
 end
 local optimization=2;local symbol_map;local arka='yeni';local dokum;local yb_inline=28
@@ -5852,6 +5852,7 @@ if modern then
     elseif flag=='--output' or flag=='-o' then output=value
     elseif flag=='--harita' then symbol_map=value
     elseif flag=='--sayac' then Y.sayac={dosya=value,liste={}}
+    elseif flag=='--pgo' then Y.pgo=value
     elseif flag=='--profil' then
       Y.profil={}
       for satir in io.lines(value) do
@@ -5894,6 +5895,47 @@ if target=='x86_64' and os.getenv('YB_SOGUK_SONA')~='0' then Y.soguk_sona_ok=tru
 if instruction=='sse' then instruction='sse2' end
 if instruction=='avx-512' then instruction='avx512' end
 if instruction=='avx-512bw' then instruction='avx512bw' end
+if Y.pgo and not Y.sayac then
+
+  local function q(x) return "'"..x:gsub("'","'\\''").."'" end
+  local hs,hc=io.popen('uname -sm'):read('l'):match('(%S+)%s+(%S+)')
+  hs=hs=='Darwin' and 'macos' or 'linux';hc=(hc=='x86_64' or hc=='amd64') and 'x86_64' or 'arm64'
+  local ortam=''
+  if target~=hc then
+    if hs=='macos' and target=='x86_64' then ortam='ROSETTA_ADVERTISE_AVX=1 ' else fail('--pgo: '..target..' bu makinede koşturulamıyor') end
+  end
+  local komut=q(arg[-1])..' '..q(arg[0])..' '..q(path)
+  local atla={['--arch']=1,['--cpu']=1,['--instruction']=1,['--output']=1,['-o']=1,['--pgo']=1,['--profil']=1,['--harita']=1,['--dokum']=1}
+  for i=2,#arg,2 do if not atla[arg[i]] then komut=komut..' '..arg[i]..' '..q(arg[i+1]) end end
+  local ins=instruction:sub(1,6)=='avx512' and 'avx2' or instruction
+  local d=os.tmpname();os.remove(d);os.execute('mkdir -p '..q(d))
+  local m=d..'/m'
+  komut=komut..' --arch '..hs..' --cpu '..target..' --instruction '..ins..' --sayac '..q(m..'.s')..' --output '..q(m)
+  local function tur(ek)
+    os.remove(d..'/t_sayac.bin')
+    if not os.execute(komut..ek..' >/dev/null') then fail('--pgo: sayaçlı derleme başarısız') end
+    if not os.execute('(cd '..q(d)..' && '..ortam..q(m)..' >/dev/null) <'..q(Y.pgo)) then fail('--pgo: sayaçlı koşu başarısız') end
+    local c=assert(io.open(d..'/t_sayac.bin','rb')):read('a')
+    local imza,p,giris,bas={},{},{},{}
+    for l in io.lines(m..'.s.imza') do local fn,x=l:match('(%S+) (%S+)');imza[fn]=x end
+    for l in io.lines(m..'.s') do
+      local i,fn,b,a=l:match('(%d+) (%S+) (%d+) (%x+)');i,a=tonumber(i),tonumber(a,16)
+      local n=string.unpack('<i8',c,8*i+1)
+      if imza[fn] then p[fn]=p[fn] or {imza=imza[fn],b={}};p[fn].b[tonumber(b)]=n end
+      if not bas[fn] or a<bas[fn] then bas[fn]=a;giris[fn]=n end
+    end
+    return p,giris
+  end
+  local giris;Y.profil,giris=tur('')
+  if target=='x86_64' then
+    local ust=0;for _,n in pairs(giris) do ust=math.max(ust,n) end
+    local f=assert(io.open(d..'/sicak','w'))
+    for fn,n in pairs(giris) do if n>=0.1*ust then Y.profil_sicak=Y.profil_sicak or {};Y.profil_sicak[fn]=true;f:write('I '..fn..' 1\n') end end
+    f:close()
+    if Y.profil_sicak then Y.profil=tur(' --profil '..q(d..'/sicak')) end
+  end
+  os.execute('rm -rf '..q(d))
+end
 
 Y.x64_ic_hizli=target=='x86_64' and os.getenv('YB_IC_HIZLI')~='0' and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw')
 

@@ -3897,6 +3897,7 @@ işlev ana():i64 {
         } yoksa eğer metin_eşit(komut,"isready") { kilit_al(&çıktı_kilidi); metin_satırı("readyok"); dosya_boşalt(çıktı); kilit_bırak(&çıktı_kilidi); }
         yoksa eğer metin_eşit(komut,"ucinewgame") { aramayı_durdur(); önbelleği_temizle(); geçmişleri_temizle(); başlangıç(oyun); }
         yoksa eğer metin_eşit(komut,"stop") { aramayı_durdur(); }
+        yoksa eğer metin_eşit(komut,"wait") { eğer arama_açık { iş_bekle(adres(arama_kaydı)); arama_açık=0; } }
         yoksa eğer metin_eşit(komut,"ponderhit") {
             eğer arama_açık && rakip_sırası {
                 atomik_yaz(&başlangıç_zamanı,zaman_ns());

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds every release binary of Tony into release/ with netv3.tnns embedded.
+# Builds every release binary of Tony into release/ with netv3.tnns embedded and profile-guided (pgo.uci).
 # usage: ./release.sh            (JOBS=4 parallel builds by default)
 #        JOBS=8 ./release.sh
 set -u
@@ -14,7 +14,7 @@ rm -f release/tony-*
 
 build() {
   local arch="$1" cpu="$2" isa="$3" name="$4"
-  if lua t.lua tony.t --arch "$arch" --cpu "$cpu" --instruction "$isa" --gom "$NET" --output "release/$name" > "release/.$name.log" 2>&1; then
+  if lua t.lua tony.t --arch "$arch" --cpu "$cpu" --instruction "$isa" --gom "$NET" --pgo pgo.uci --output "release/$name" > "release/.$name.log" 2>&1; then
     echo "OK   $name"
     rm -f "release/.$name.log"
   else
