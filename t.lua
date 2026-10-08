@@ -1238,6 +1238,32 @@ function Y.yuk_kaynastir(f,H)
   end
 end
 
+function Y.x64_birlestir(f,H)
+  if not H.x64 or os.getenv('YB_X64_BIRLESTIR')=='0' then return end
+  local u=Y.kullanim(f)
+  local function sb(id) local t=f.d[id]; if t and t.op=='sabit' then return t.s end end
+  local function uygun(p,b)
+    local t=f.d[p]
+    return t and t.blok==b and u[p]==1 and not t.kaynasik and not t.kaynasik_yuk and not t.tst and not t.blsr
+  end
+  for _,b in ipairs(f.bloklar) do
+    for _,id in ipairs(b.k) do
+      local t=f.d[id]
+      if t.op=='kiyas' and t.b and sb(t.b)==0 and (t.iliski=='==' or t.iliski=='!=') and not t.kaynasik_yuk
+         and t.a and uygun(t.a,b) and f.d[t.a].op=='ve' and f.d[t.a].a and f.d[t.a].b then
+        f.d[t.a].kaynasik=true; t.tst=t.a; t.kaynasik_ek={t.a}
+      elseif H.bmi1 and t.op=='ve' and t.a and t.b and not t.kaynasik_yuk then
+        local function eksi_bir(p,x)
+          local q=f.d[p]
+          return q and uygun(p,b) and ((q.op=='cikar' and q.a==x and sb(q.b)==1) or (q.op=='topla' and q.a==x and sb(q.b)==-1))
+        end
+        if eksi_bir(t.b,t.a) then f.d[t.b].kaynasik=true; t.blsr=t.a; t.kaynasik_ek={t.b}
+        elseif eksi_bir(t.a,t.b) then f.d[t.a].kaynasik=true; t.blsr=t.b; t.kaynasik_ek={t.a} end
+      end
+    end
+  end
+end
+
 function Y.arm_birlestir(f,H)
   if not H.arm_birlestir then return end
   local u=Y.kullanim(f)
@@ -1321,6 +1347,25 @@ end
 function Y.genel_kaynastir(f,H,E)
   if not H.genel_katlama or not E.exe then return end
   local u=Y.kullanim(f)
+  if H.x64 then
+
+    local katlanan={}
+    for _,b in ipairs(f.bloklar) do
+      for _,id in ipairs(b.k) do
+        local t=f.d[id]
+        if (t.op=='yukle' or t.op=='sakla') and not t.c and t.a then
+          local g=f.d[t.a]
+          local o=t.ofset or 0
+          if g.op=='genel_adres' and not g.kaynasik and g.g and not g.g.text_label
+             and o>=-2147483648 and o<=2147483647 and (t.op=='yukle' or t.b~=t.a) then
+            t.genel=g; katlanan[t.a]=(katlanan[t.a] or 0)+1
+          end
+        end
+      end
+    end
+    for id,n in pairs(katlanan) do if u[id]==n then f.d[id].kaynasik=true end end
+    return
+  end
   for _,b in ipairs(f.bloklar) do
     for _,id in ipairs(b.k) do
       local t=f.d[id]
@@ -3251,8 +3296,9 @@ end
 function Y.hiza_iste(f,E,b,H)
   if not H.x64 and os.getenv('YB_HIZA_ARM')~='1' then return end
   if not (f.dongu_ic and f.dongu_ic[b.no]) then return end
-  local n=tonumber(os.getenv('YB_HIZA_N') or '') or 16
-  local ust=tonumber(os.getenv('YB_HIZA_UST') or '') or 8
+
+  local n=tonumber(os.getenv('YB_HIZA_N') or '') or 64
+  local ust=tonumber(os.getenv('YB_HIZA_UST') or '') or 16
   if n>1 and E.hiza then E.hiza(n,ust) end
 end
 
@@ -3322,7 +3368,8 @@ function Y.cerceve_sec(f,H)
   if not H.x64 then return H end
   for _,b in ipairs(f.bloklar) do
     for _,id in ipairs(b.k) do
-      if f.d[id].op=='ic' then return H end
+      local t=f.d[id]
+      if t.op=='ic' and not (Y.x64_ic_hizli and Y.x64_dilim[t.ad]) and not (H.ic_bozan and H.ic_bozan[t.ad]) then return H end
     end
   end
   f.rsp_cerceve=true
@@ -3412,6 +3459,7 @@ function Y.derle(fn,E,H)
   Y.yuk_kaynastir(f,H)
   Y.genel_kaynastir(f,H,E)
   Y.arm_birlestir(f,H)
+  Y.x64_birlestir(f,H)
   Y.konumla(f)
   Y.canlilik(f)
   Y.araliklar(f,H)
@@ -4305,6 +4353,17 @@ function X.yeni(f,E,H)
 
   function M.mr(w,opcode,reg,taban,indeks,olcek,yer,zorla_rex)
     local x=indeks or 0
+    if taban=='rip' then
+
+      local rex=0x40|(w and 8 or 0)|(((reg>>3)&1)<<2)
+      if rex~=0x40 or zorla_rex then b1(rex) end
+      if opcode>0xff then b1(opcode>>8) end
+      b1(opcode)
+      b1((0<<6)|((reg&7)<<3)|5)
+      E.global_relocations[#E.global_relocations+1]={E.kod_boy(),yer.g,extra=yer.ofset}
+      i32(0)
+      return
+    end
     if taban==nil then
 
       local rex=0x40|(w and 8 or 0)|(((reg>>3)&1)<<2)|(((x>>3)&1)<<1)
@@ -4356,8 +4415,14 @@ function X.yeni(f,E,H)
   end
 
   local TB=f.rsp_cerceve and 4 or 5
-  function M.yuva_ofset(o) return f.yuva_taban+o end
-  function M.yuva_yukle(r,ofset) M.mr(true,0x8b,r,TB,nil,1,ofset) end
+  M.rsp_ek=0
+  function M.yuva_ofset(o) return f.yuva_taban+o+(f.rsp_cerceve and M.rsp_ek or 0) end
+  function M.yuva_yukle(r,ofset)
+    local y=M.son_yuk
+    if y and y.r==r and y.ofset==ofset and y.konum==E.kod_boy() and Y.son_isaret_konum~=E.kod_boy() then return end
+    M.mr(true,0x8b,r,TB,nil,1,ofset)
+    M.son_yuk={r=r,ofset=ofset,konum=E.kod_boy()}
+  end
   function M.yuva_sakla(r,ofset) M.mr(true,0x89,r,TB,nil,1,ofset) end
 
   function M.oku(id,kazi_no)
@@ -4445,8 +4510,19 @@ function X.yeni(f,E,H)
     return f.d[y]
   end
 
+  function M.vex3_rr(pp,opcode,reg,vvvv,rm)
+    b1(0xc4)
+    b1(((1-((reg>>3)&1))<<7)|(1<<6)|((1-((rm>>3)&1))<<5)|0x02)
+    b1((1<<7)|(((~vvvv)&15)<<3)|pp)
+    b1(opcode); b1(0xc0|((reg&7)<<3)|(rm&7))
+  end
   function M.ikili_uret(t,d)
     local op=t.op
+    if t.blsr then
+
+      local ra=M.oku(t.blsr,1)
+      M.vex3_rr(0,0xf3,1,d,ra); return
+    end
     local yuk=M.katlanmis_yuk(t)
     if yuk and X.ikili_rm[op] then
       local ra=M.oku(t.a,1)
@@ -4494,6 +4570,10 @@ function X.yeni(f,E,H)
       local digit=(op=='sola') and 4 or (t.isaretsiz and 5 or 7)
       if sv then
         M.tasi(d,M.oku(t.a,1)); M.rr(true,0xc1,digit,d); b1(sv&63)
+      elseif H.bmi2 then
+
+        local ra=M.oku(t.a,1); local rb=M.oku(t.b,2)
+        M.vex3_rr(op=='sola' and 1 or (t.isaretsiz and 3 or 2),0xf7,d,rb,ra)
       else
         local rb=M.oku(t.b,2); M.tasi(1,rb)
         M.tasi(d,M.oku(t.a,1)); M.rr(true,0xd3,digit,d)
@@ -4501,6 +4581,10 @@ function X.yeni(f,E,H)
       return
     end
     if op=='carp' then
+      if sv and sv>0 and sv<=4611686018427387904 and (sv&(sv-1))==0 then
+        local k=0; while (1<<k)~=sv do k=k+1 end
+        M.tasi(d,M.oku(t.a,1)); M.rr(true,0xc1,4,d); b1(k); return
+      end
       if sv and sv>=-2147483648 and sv<=2147483647 then
         M.rr(true,0x69,d,M.oku(t.a,1)); i32(sv); return
       end
@@ -4522,6 +4606,14 @@ function X.yeni(f,E,H)
   end
 
   function M.kiyas_uret(t)
+    if t.tst then
+
+      local v=f.d[t.tst]
+      local ra=M.oku(v.a,1); local m=M.sabit_mi(v.b)
+      if m and m>=-2147483648 and m<=2147483647 then M.rr(true,0xf7,0,ra); i32(m)
+      else M.rr(true,0x85,M.oku(v.b,2),ra) end
+      return (t.isaretsiz and X.kosul_u or X.kosul)[t.iliski]
+    end
     local yuk=M.katlanmis_yuk(t)
     if yuk then
       local ra=M.oku(t.a,1)
@@ -4566,6 +4658,7 @@ function X.yeni(f,E,H)
     local ofset=t.ofset or 0
     local indeks=t.c
     local tt=f.d[taban]
+    if t.genel and not indeks then return 'rip',nil,1,{g=t.genel.g,ofset=ofset} end
     if tt.op=='yuva_adres' and not f.kayit[taban] and not f.dokum[taban] then
       return TB,(indeks and M.oku(indeks,ki) or nil),
              t.olcek or 1,M.yuva_ofset(tt.ofset)+ofset
@@ -4778,6 +4871,46 @@ function X.yeni(f,E,H)
 
   function M.ic_uret(t,d)
     local dugum=t.dugum
+    if H.ic_bozan and H.ic_bozan[t.ad] then
+
+      local yeni={'call',dugum[2],{},type=dugum.type,yb_hazir=true}
+      for k,v in pairs(dugum) do if type(k)=='string' then yeni[k]=v end end
+      local regs={0,1,2,8}
+      local cift={}
+      for i,a in ipairs(t.args) do
+        local sv=M.sabit_mi(a)
+        if sv then yeni[3][i]={'num',sv,type=dugum[3][i].type}; cift[#cift+1]={regs[i],nil,sv}
+        else
+          yeni[3][i]={'ybreg',regs[i],type=dugum[3][i].type}
+          if f.kayit[a] then cift[#cift+1]={regs[i],f.kayit[a]}
+          else cift[#cift+1]={regs[i],nil,nil,M.yuva_ofset(f.dokum[a])} end
+        end
+      end
+      M.paralel(cift)
+      E.generate(yeni)
+      M.tasi(d,0)
+      return
+    end
+    if Y.x64_ic_hizli and Y.x64_dilim[t.ad] then
+
+      local n=#t.args; local boy=16*n
+      local yeni={'call',dugum[2],{},type=dugum.type,x64_hazir=true}
+      for k,v in pairs(dugum) do if type(k)=='string' then yeni[k]=v end end
+      M.grup_imm(5,4,boy)
+      M.rsp_ek=boy
+      for i,a in ipairs(t.args) do
+        local sv=M.sabit_mi(a)
+        local ft=dugum[3][i].type=='f32' or dugum[3][i].type=='f64'
+        local r
+        if sv and not ft then yeni[3][i]={'num',sv,type=dugum[3][i].type}; M.anlik(sv,H.kazi[1]); r=H.kazi[1]
+        else yeni[3][i]={'ybslot',type=dugum[3][i].type,ad=dugum[2]}; r=M.oku(a,1) end
+        M.mr(true,0x89,r,4,nil,1,16*(n-i))
+      end
+      M.rsp_ek=0
+      E.generate(yeni)
+      M.tasi(d,0)
+      return
+    end
     local yeni={'call',dugum[2],{},type=dugum.type}
     for k,v in pairs(dugum) do if type(k)=='string' then yeni[k]=v end end
 
@@ -4954,9 +5087,39 @@ function X.yeni(f,E,H)
     M.tasi(d,rd)
   end
 
+  function M.hedef_coz(b)
+    local n=0
+    while b and M.elenen and M.elenen[b] and n<64 do b=f.d[b.k[#b.k]].hedef; n=n+1 end
+    return b
+  end
+
+  function M.basit_baslik(h)
+    local n=#h.k
+    local son=n>0 and f.d[h.k[n]]
+    if not son or son.op~='kosul' then return false end
+    for i=1,n-1 do
+      local t=f.d[h.k[i]]
+      if t.op~='phi' and not (t.op=='kiyas' and t.kaynasik and son.kaynasik_kiyas==t.id) then return false end
+    end
+    if son.kaynasik_kiyas then
+      local k=f.d[son.kaynasik_kiyas]
+      if k.blok~=h then return false end
+    end
+    return true
+  end
+  function M.kosul_uret(son,sonraki)
+    local dogru,yanlis=M.hedef_coz(son.dogru),M.hedef_coz(son.yanlis)
+    local c
+    if son.kaynasik_kiyas then c=M.kiyas_uret(f.d[son.kaynasik_kiyas])
+    else local r=M.oku(son.a,1); M.rr(true,0x85,r,r); c=X.kosul['!='] end
+    if sonraki==yanlis then E.kosul_dal64(dogru.etiket,c)
+    elseif sonraki==dogru then E.kosul_dal64(yanlis.etiket,X.ters[c])
+    else E.kosul_dal64(dogru.etiket,c); E.jump(yanlis.etiket) end
+  end
   function M.blok_uret(b,sonraki)
     Y.hiza_iste(f,E,b,H)
     E.mark(b.etiket)
+    M.son_yuk=nil
     local n=#b.k
     for i=1,n do
       local t=f.d[b.k[i]]
@@ -4966,14 +5129,13 @@ function X.yeni(f,E,H)
     if not son or not Y.terminal[son.op] then return end
     if son.op=='dal' then
       M.phi_tasi(b,son.hedef)
-      if son.hedef~=sonraki then E.jump(son.hedef.etiket) end
+      local h=M.hedef_coz(son.hedef)
+      if h~=sonraki and Y.dongu_dondur and M.duz_sira and M.duz_sira[h] and M.duz_sira[h]<=M.duz_sira[b] and M.basit_baslik(h) then
+
+        M.kosul_uret(f.d[h.k[#h.k]],sonraki)
+      elseif h~=sonraki then E.jump(h.etiket) end
     elseif son.op=='kosul' then
-      local c
-      if son.kaynasik_kiyas then c=M.kiyas_uret(f.d[son.kaynasik_kiyas])
-      else local r=M.oku(son.a,1); M.rr(true,0x85,r,r); c=X.kosul['!='] end
-      if sonraki==son.yanlis then E.kosul_dal64(son.dogru.etiket,c)
-      elseif sonraki==son.dogru then E.kosul_dal64(son.yanlis.etiket,X.ters[c])
-      else E.kosul_dal64(son.dogru.etiket,c); E.jump(son.yanlis.etiket) end
+      M.kosul_uret(son,sonraki)
     elseif son.op=='don' then
       local sv=M.sabit_mi(son.a)
       if sv then M.anlik(sv,0) else M.tasi(0,M.oku(son.a,1)) end
@@ -5053,7 +5215,44 @@ function X.yeni(f,E,H)
       end
     end
     M.paralel(cift)
-    for i,b in ipairs(f.duz) do M.blok_uret(b,f.duz[i+1]) end
+    M.duz_sira={}
+    for i,b in ipairs(f.duz) do M.duz_sira[b]=i end
+    M.elenen={}
+    if Y.bos_blok_ele then
+      for i,b in ipairs(f.duz) do
+        local t=#b.k>=1 and f.d[b.k[#b.k]]
+        if t and #b.k>1 then
+          if not Y.bos_phi_blok_ele then t=nil
+          else for j=1,#b.k-1 do if f.d[b.k[j]].op~='phi' then t=nil; break end end end
+        end
+        if i>1 and t and t.op=='dal' and t.hedef~=b then
+          local bos=true
+          for _,id in ipairs(t.hedef.k) do
+            local p=f.d[id]
+            if p.op~='phi' then break end
+            local kaynak
+            for _,g in ipairs(p.girdi) do if g[1]==b then kaynak=g[2] end end
+            if kaynak then
+              local rp,rk=f.kayit[id],f.kayit[kaynak]
+              if not (rp and rk and rp==rk) and not (not rp and not f.dokum[id]) then bos=false end
+            end
+          end
+          if bos then M.elenen[b]=true end
+        end
+      end
+      for b in pairs(M.elenen) do
+        local x,n=b,0
+        while x and M.elenen[x] and n<64 do x=f.d[x.k[#x.k]].hedef; n=n+1 end
+        if n>=64 then M.elenen[b]=nil end
+      end
+    end
+    for i,b in ipairs(f.duz) do
+      if not M.elenen[b] then
+        local j=i+1
+        while f.duz[j] and M.elenen[f.duz[j]] do j=j+1 end
+        M.blok_uret(b,M.hedef_coz(f.duz[j]) and f.duz[j] or nil)
+      end
+    end
     E.mark(f.bitis)
     for i,r in ipairs(kalici) do M.mr(true,0x8b,r,TB,nil,1,cikis+(i-1)*8) end
     if f.rsp_cerceve then
@@ -5097,8 +5296,17 @@ function Y.x64_hedef(windows)
   H.sec_kaynastirma_yok=os.getenv('YB_X64_SELECT')=='0'
   H.yuk_katlama=true
   H.x64=true
+  H.genel_katlama=os.getenv('YB_GENEL')~='0'
+
+  if Y.x64_ic_hizli then
+
+    local az={0,1,2,8,9,10}
+    H.ic_bozan={['vektör_topla_i32']=az,['vektör_topla_i16']=az,['vektör_çıkar_i16']=az,
+                ['vektör_enbüyük_i16']=az,['vektör_topla_i16_i32']=az}
+  end
   H.popcnt=Y.x64_popcnt
   H.bmi1=Y.x64_bmi1
+  H.bmi2=Y.x64_bmi2
   return H
 end
 
@@ -5635,10 +5843,18 @@ if instruction=='sse' then instruction='sse2' end
 if instruction=='avx-512' then instruction='avx512' end
 if instruction=='avx-512bw' then instruction='avx512bw' end
 
+Y.x64_ic_hizli=target=='x86_64' and os.getenv('YB_IC_HIZLI')~='0' and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw')
+
+Y.x64_dilim={['seyrek_karma_indis_u8_i8_i32']=1,['seyrek_çift_indis_u8_i16_i32']=1,['yoğun_çift_u8_i16_i32']=1,['satır_topla_çıkar_i16']=1,
+  ['indis4_u8']=1,['seyrek_blok_indis_u8_i8_i32']=1,['seyrek_blok_u8_i8_i32']=1,['çarp_kırp_i16_u8']=1,['kırp_çift_i32_u8']=1,
+  ['nokta_u8_i8_i32']=1,['yoğun_blok_u8_i8_i32']=1}
 Y.x64_popcnt=target=='x86_64' and os.getenv('YB_POPCNT')~='0' and
              (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw')
 
 Y.x64_bmi1=target=='x86_64' and os.getenv('YB_BMI1')~='0' and
+           (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw')
+
+Y.x64_bmi2=target=='x86_64' and os.getenv('YB_BMI2')~='0' and
            (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw')
 
 if Y.avx_vnni and (target~='x86_64' or (instruction~='auto' and instruction~='avx2')) then
@@ -6212,6 +6428,7 @@ end
 local required_features=({auto=1,scalar=0,sse2=1,avx=3,avx2=7,avx512=15,avx512bw=31,neon=32})[instruction]
 if Y.x64_popcnt then required_features=required_features|256 end
 if Y.x64_bmi1 then required_features=required_features|1024 end
+if Y.x64_bmi2 then required_features=required_features|2048 end
 runtime_common=runtime_common..'\nişlev komut_kümesi_uygun():i64 { dön (işlemci_özellikleri() & u64('..required_features..')) == u64('..required_features..'); }\n'
 if Y.avx_vnni or instruction=='auto' or instruction=='avx512' or instruction=='avx512bw' or (target=='arm64' and instruction=='neon') then runtime_common=runtime_common..'\ngenel __t_cpu_cache:u64=0;\n' end
 
@@ -7387,8 +7604,12 @@ local function mark(l)
   if p and p[3]=='b' and p[2]==l and p[1]==#code-4 then
     patches[#patches]=nil;for i=1,4 do code[#code]=nil end
     for _,m in ipairs(pending_marks) do labels[m]=#code end;pending_at=#code
+  elseif p and p[3]=='rel32' and p[4]=='jmp' and p[2]==l and p[1]==#code-4 and code[#code-4]==string.char(0xe9) then
+
+    patches[#patches]=nil;for i=1,5 do code[#code]=nil end
+    for _,m in ipairs(pending_marks) do labels[m]=#code end;pending_at=#code
   end
-  labels[l]=#code;pending_marks[#pending_marks+1]=l;dead_after=-1;x0_alias=nil
+  labels[l]=#code;pending_marks[#pending_marks+1]=l;dead_after=-1;x0_alias=nil;Y.son_isaret_konum=#code
 end
 local arm=target=='arm64'
 local function jump(l,zero,call)
@@ -7497,6 +7718,11 @@ local function memory_node(lhs,value)
   return {'call',stem..(value and '_yaz' or '_oku'),value and {address,index,value} or {address,index},type=t}
 end
 local generate
+
+Y.args_push=function(e)
+  if e.x64_hazir then return end
+  for _,a in ipairs(e[3]) do generate(a);push() end
+end
 local function fp_in(t,reg,source)
   if arm then u32((t=='f32' and 0x1e270000 or 0x9e670000) | (source<<5) | reg)
   else hex(t=='f32' and '66 0f 6e' or '66 48 0f 6e');bytes(string.char(0xc0 | (reg<<3) | source)) end
@@ -7974,12 +8200,13 @@ end
     if structures[e.element] then generate({'call','adres_ekle',{e[2],{'*',e[3],{'num',structures[e.element].size}}}})
     else generate(memory_node(e)) end
     return
+  elseif op=='ybslot' then fail('x64_hazir: yerlesik argumani yeniden uretilemez ('..tostring(e.ad)..')')
   elseif op=='call' then
     local special=e[2]
     if arm and instruction=='neon' and (special=='karışım4_i32' or special=='kaydır_kırp_i16_u8') then
       local mix=special=='karışım4_i32'
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         for r=#e[3]-1,0,-1 do pop(r) end
       end
       local loop,tail,done,bad,exit=label(),label(),label(),label(),label()
@@ -8024,7 +8251,7 @@ end
        (special=='seyrek_blok_indis_u8_i8_i32' or special=='yoğun_blok_u8_i8_i32') then
       local fallback,done=label(),label()
       H.x64_cpu_dal(4096,fallback)
-      for _,a in ipairs(e[3]) do generate(a);push() end
+      Y.args_push(e)
 
       local avx_vnni_sparse='48 83 7c 24 20 20 0f 85 c9 00 00 00 48 83 7c 24 30 00 0f 8c a7 00 00 00 48 f7 44 24 30 03 00 00 00 0f 85 98 00 00 00 4c 8b 0c 24 4d 85 c9 0f 8c 8b 00 00 00 4c 8b 5c 24 30 49 c1 eb 02 4d 39 d9 7f 7d 48 8b 44 24 70 4c 8b 44 24 40 48 8b 4c 24 10 48 8b 54 24 60 4c 8b 54 24 50 c4 c1 7e 6f 00 c4 c1 7e 6f 48 20 c4 c1 7e 6f 50 40 c4 c1 7e 6f 58 60 4d 85 c9 74 31 44 0f b7 19 c4 a2 7d 58 24 9a 49 c1 e3 07 4d 01 d3 c4 c2 5d 50 03 c4 c2 5d 50 4b 20 c4 c2 5d 50 53 40 c4 c2 5d 50 5b 60 48 83 c1 02 49 ff c9 75 cf c5 fe 7f 00 c5 fe 7f 48 20 c5 fe 7f 50 40 c5 fe 7f 58 60 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 81 c4 80 00 00 00 e9 cc 03 00 00 48 83 7c 24 20 20 0f 85 50 02 00 00 48 83 7c 24 30 00 0f 8c 2e 02 00 00 48 f7 44 24 30 03 00 00 00 0f 85 1f 02 00 00 4c 8b 0c 24 4d 85 c9 0f 8c 12 02 00 00 4c 8b 5c 24 30 49 c1 eb 02 4d 39 d9 0f 8f 00 02 00 00 48 83 ec 40 c5 fa 7f 34 24 c5 fa 7f 7c 24 10 c5 7a 7f 44 24 20 c5 7a 7f 4c 24 30 48 8b 84 24 b0 00 00 00 4c 8b 84 24 80 00 00 00 48 8b 4c 24 50 48 8b 94 24 a0 00 00 00 4c 8b 94 24 90 00 00 00 c5 fd ef c0 c5 f5 ef c9 c5 ed ef d2 c5 e5 ef db c5 dd ef e4 c5 d5 ef ed c5 cd ef f6 c5 c5 ef ff 4d 85 c9 0f 84 a2 00 00 00 44 0f b7 19 c4 22 79 58 04 9a c4 42 7d 30 c0 49 c1 e3 07 4d 01 d3 c4 42 7d 20 0b c4 41 35 f5 c8 c4 c1 7d fe c1 c4 42 7d 20 4b 10 c4 41 35 f5 c8 c4 c1 75 fe c9 c4 42 7d 20 4b 20 c4 41 35 f5 c8 c4 c1 6d fe d1 c4 42 7d 20 4b 30 c4 41 35 f5 c8 c4 c1 65 fe d9 c4 42 7d 20 4b 40 c4 41 35 f5 c8 c4 c1 5d fe e1 c4 42 7d 20 4b 50 c4 41 35 f5 c8 c4 c1 55 fe e9 c4 42 7d 20 4b 60 c4 41 35 f5 c8 c4 c1 4d fe f1 c4 42 7d 20 4b 70 c4 41 35 f5 c8 c4 c1 45 fe f9 48 83 c1 02 49 ff c9 0f 85 5e ff ff ff c4 e2 7d 02 c0 c4 c3 7d 39 c0 01 c4 c1 79 6c c0 c4 c1 79 fe 00 c5 fa 7f 00 c4 e2 75 02 c9 c4 c3 7d 39 c8 01 c4 c1 71 6c c8 c4 c1 71 fe 48 10 c5 fa 7f 48 10 c4 e2 6d 02 d2 c4 c3 7d 39 d0 01 c4 c1 69 6c d0 c4 c1 69 fe 50 20 c5 fa 7f 50 20 c4 e2 65 02 db c4 c3 7d 39 d8 01 c4 c1 61 6c d8 c4 c1 61 fe 58 30 c5 fa 7f 58 30 c4 e2 5d 02 e4 c4 c3 7d 39 e0 01 c4 c1 59 6c e0 c4 c1 59 fe 60 40 c5 fa 7f 60 40 c4 e2 55 02 ed c4 c3 7d 39 e8 01 c4 c1 51 6c e8 c4 c1 51 fe 68 50 c5 fa 7f 68 50 c4 e2 4d 02 f6 c4 c3 7d 39 f0 01 c4 c1 49 6c f0 c4 c1 49 fe 70 60 c5 fa 7f 70 60 c4 e2 45 02 ff c4 c3 7d 39 f8 01 c4 c1 41 6c f8 c4 c1 41 fe 78 70 c5 fa 7f 78 70 c5 fa 6f 34 24 c5 fa 6f 7c 24 10 c5 7a 6f 44 24 20 c5 7a 6f 4c 24 30 48 83 c4 40 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 81 c4 80 00 00 00 e9 70 01 00 00 48 8b 44 24 70 4c 8b 44 24 40 4c 8b 54 24 20 48 83 7c 24 30 00 0f 8c 47 01 00 00 48 f7 44 24 30 03 00 00 00 0f 85 38 01 00 00 4d 85 d2 0f 8e 2f 01 00 00 49 f7 c2 0f 00 00 00 0f 85 22 01 00 00 4c 8b 0c 24 4d 85 c9 0f 8c 15 01 00 00 4c 8b 5c 24 30 49 c1 eb 02 4d 39 d9 0f 8f 03 01 00 00 48 8b 4c 24 10 4c 8b 0c 24 c5 fd ef c0 c5 f5 ef c9 c5 ed ef d2 c5 e5 ef db 4d 85 c9 74 63 44 0f b7 19 48 8b 54 24 60 c4 a2 79 58 24 9a c4 e2 7d 30 e4 4c 0f af 5c 24 20 49 c1 e3 02 4c 03 5c 24 50 c4 c2 7d 20 2b c5 d5 f5 ec c5 fd fe c5 c4 c2 7d 20 6b 10 c5 d5 f5 ec c5 f5 fe cd c4 c2 7d 20 6b 20 c5 d5 f5 ec c5 ed fe d5 c4 c2 7d 20 6b 30 c5 d5 f5 ec c5 e5 fe dd 48 83 c1 02 49 ff c9 75 9d c4 e2 7d 02 c0 c4 e3 7d 39 c4 01 c5 f9 6c c4 c4 c1 79 fe 00 c5 fa 7f 00 c4 e2 75 02 c9 c4 e3 7d 39 cc 01 c5 f1 6c cc c4 c1 71 fe 48 10 c5 fa 7f 48 10 c4 e2 6d 02 d2 c4 e3 7d 39 d4 01 c5 e9 6c d4 c4 c1 69 fe 50 20 c5 fa 7f 50 20 c4 e2 65 02 db c4 e3 7d 39 dc 01 c5 e1 6c dc c4 c1 61 fe 58 30 c5 fa 7f 58 30 48 83 44 24 50 40 48 83 c0 40 49 83 c0 40 49 83 ea 10 0f 85 01 ff ff ff 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 ec 80'
       local avx_vnni_dense='48 83 3c 24 10 0f 85 a4 00 00 00 4c 8b 4c 24 10 4d 85 c9 0f 8c 83 00 00 00 49 f7 c1 07 00 00 00 75 7a 48 8b 44 24 50 48 8b 4c 24 40 48 8b 54 24 30 4c 8b 44 24 20 c4 c1 7e 6f 00 c4 c1 7e 6f 48 20 c5 ed ef d2 c5 e5 ef db 41 bb 80 80 80 80 c4 c1 79 6e eb c4 e2 7d 58 ed 4d 85 c9 74 29 c4 e2 7d 58 21 c4 e2 5d 50 02 c4 e2 5d 50 4a 20 c4 e2 55 50 12 c4 e2 55 50 5a 20 48 83 c1 04 48 83 c2 40 49 83 e9 04 75 d7 c5 fd fa c2 c5 f5 fa cb c5 fe 7f 00 c5 fe 7f 48 20 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 60 e9 50 01 00 00 48 8b 44 24 50 4c 8b 44 24 20 4c 8b 14 24 4c 8b 4c 24 10 4d 85 c9 0f 88 26 01 00 00 49 f7 c1 07 00 00 00 0f 85 19 01 00 00 4d 85 d2 0f 8e 10 01 00 00 49 f7 c2 0f 00 00 00 0f 85 03 01 00 00 48 8b 4c 24 40 48 8b 54 24 30 4c 8b 4c 24 10 c5 fd ef c0 c5 f5 ef c9 c5 ed ef d2 c5 e5 ef db 4d 85 c9 74 5e 44 8b 19 41 81 f3 80 80 80 80 c4 c1 79 6e e3 c4 e2 79 20 e4 c4 e2 7d 59 e4 c4 e2 7d 20 2a c5 d5 f5 ec c5 fd fe c5 c4 e2 7d 20 6a 10 c5 d5 f5 ec c5 f5 fe cd c4 e2 7d 20 6a 20 c5 d5 f5 ec c5 ed fe d5 c4 e2 7d 20 6a 30 c5 d5 f5 ec c5 e5 fe dd 48 83 c1 04 48 83 c2 40 49 83 e9 04 75 a2 c4 e2 7d 02 c0 c4 e3 7d 39 c4 01 c5 f9 6c c4 c4 c1 79 fe 00 c5 fa 7f 00 c4 e2 75 02 c9 c4 e3 7d 39 cc 01 c5 f1 6c cc c4 c1 71 fe 48 10 c5 fa 7f 48 10 c4 e2 6d 02 d2 c4 e3 7d 39 d4 01 c5 e9 6c d4 c4 c1 69 fe 50 20 c5 fa 7f 50 20 c4 e2 65 02 db c4 e3 7d 39 dc 01 c5 e1 6c dc c4 c1 61 fe 58 30 c5 fa 7f 58 30 48 89 54 24 30 48 83 c0 40 49 83 c0 40 49 83 ea 10 0f 85 01 ff ff ff 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 60'
@@ -8041,7 +8268,7 @@ end
 
         local fallback=label();vnni_done=label()
         H.x64_cpu_dal(128,fallback)
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         local dense_vnni='48 8b 44 24 50 4c 8b 44 24 20 4c 8b 14 24 4c 8b 4c 24 10 4d 85 c9 0f 88 d7 00 00 00 49 f7 c1 07 00 00 00 0f 85 ca 00 00 00 4d 85 d2 0f 8e c1 00 00 00 49 f7 c2 0f 00 00 00 0f 85 b4 00 00 00 41 bb 80 80 80 80 62 c2 7d 48 7c c3 48 8b 4c 24 40 48 8b 54 24 30 4c 8b 4c 24 10 62 f1 7d 48 ef c0 62 f1 75 48 ef c9 62 f1 6d 48 ef d2 62 f1 65 48 ef db 4d 85 c9 74 43 62 f2 7d 48 58 21 62 f1 fe 48 6f 2a 62 f2 5d 48 50 c5 62 f2 7d 40 50 d5 62 f2 7d 48 58 61 01 62 f1 fe 48 6f 6a 01 62 f2 5d 48 50 cd 62 f2 7d 40 50 dd 48 83 c1 08 48 81 c2 80 00 00 00 49 83 e9 08 75 bd 62 f1 7d 48 fe c1 62 f1 6d 48 fe d3 62 f1 7d 48 fa c2 62 d1 7d 48 fe 00 62 f1 fe 48 7f 00 48 89 54 24 30 48 83 c0 40 49 83 c0 40 49 83 ea 10 0f 85 5c ff ff ff 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 60'
         hex(dense_vnni);jump(vnni_done);mark(fallback)
       end
@@ -8069,7 +8296,7 @@ end
         mix_avx2='48 8b 44 24 50 4c 8b 4c 24 20 4d 85 c9 78 6e 49 f7 c1 0f 00 00 00 75 65 48 83 3c 24 00 7e 5e 4d 85 c9 74 55 c5 fd ef c0 c5 f5 ef c9 48 8b 4c 24 40 48 8b 54 24 10 4c 8b 14 24 c4 e2 7d 58 22 c4 e2 5d 40 11 c5 fd fe c2 c4 e2 5d 40 51 20 c5 f5 fe ca 48 03 4c 24 30 48 83 c2 08 49 ff ca 75 da c5 fe 7f 00 c5 fe 7f 48 20 48 83 c0 40 48 83 44 24 40 40 49 83 e9 10 eb a6 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 60',
         dense_avx2='48 8b 44 24 50 4c 8b 44 24 20 4c 8b 14 24 4c 8b 4c 24 10 4d 85 c9 0f 88 26 01 00 00 49 f7 c1 07 00 00 00 0f 85 19 01 00 00 4d 85 d2 0f 8e 10 01 00 00 49 f7 c2 0f 00 00 00 0f 85 03 01 00 00 48 8b 4c 24 40 48 8b 54 24 30 4c 8b 4c 24 10 c5 fd ef c0 c5 f5 ef c9 c5 ed ef d2 c5 e5 ef db 4d 85 c9 74 5e 44 8b 19 41 81 f3 80 80 80 80 c4 c1 79 6e e3 c4 e2 79 20 e4 c4 e2 7d 59 e4 c4 e2 7d 20 2a c5 d5 f5 ec c5 fd fe c5 c4 e2 7d 20 6a 10 c5 d5 f5 ec c5 f5 fe cd c4 e2 7d 20 6a 20 c5 d5 f5 ec c5 ed fe d5 c4 e2 7d 20 6a 30 c5 d5 f5 ec c5 e5 fe dd 48 83 c1 04 48 83 c2 40 49 83 e9 04 75 a2 c4 e2 7d 02 c0 c4 e3 7d 39 c4 01 c5 f9 6c c4 c4 c1 79 fe 00 c5 fa 7f 00 c4 e2 75 02 c9 c4 e3 7d 39 cc 01 c5 f1 6c cc c4 c1 71 fe 48 10 c5 fa 7f 48 10 c4 e2 6d 02 d2 c4 e3 7d 39 d4 01 c5 e9 6c d4 c4 c1 69 fe 50 20 c5 fa 7f 50 20 c4 e2 65 02 db c4 e3 7d 39 dc 01 c5 e1 6c dc c4 c1 61 fe 58 30 c5 fa 7f 58 30 48 89 54 24 30 48 83 c0 40 49 83 c0 40 49 83 ea 10 0f 85 01 ff ff ff 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 60',
       }
-      for _,a in ipairs(e[3]) do generate(a);push() end
+      Y.args_push(e)
       hex(assert(snippets[block_kernel..'_'..profile]));if vnni_done then mark(vnni_done) end;return
     end
     if special=='satır_topla_çıkar_i16' then
@@ -8077,8 +8304,8 @@ end
       if not arm and (instruction=='avx512bw' or (instruction=='auto' and Y.avx512_auto)) then
         local fallback=label();wide_done=label()
         H.x64_cpu_dal(31,fallback)
-        for _,a in ipairs(e[3]) do generate(a);push() end
-        local satir_i16_avx512bw='48 8b 44 24 60 48 8b 4c 24 50 48 8b 54 24 40 48 85 d2 0f 8c 2e 01 00 00 48 83 7c 24 20 00 0f 8c 22 01 00 00 48 83 3c 24 00 0f 8c 17 01 00 00 4d 31 db 48 83 fa 40 0f 8c 8c 00 00 00 62 f1 ff 48 6f 01 62 f1 ff 48 6f 49 01 4c 8b 44 24 30 4c 8b 4c 24 20 4d 85 c9 74 1c 4d 8b 10 4d 01 da 62 d1 7d 48 fd 02 62 d1 75 48 fd 4a 01 49 83 c0 08 49 ff c9 75 e4 4c 8b 44 24 10 4c 8b 0c 24 4d 85 c9 74 1c 4d 8b 10 4d 01 da 62 d1 7d 48 f9 02 62 d1 75 48 f9 4a 01 49 83 c0 08 49 ff c9 75 e4 62 f1 ff 48 7f 00 62 f1 ff 48 7f 48 01 48 05 80 00 00 00 48 81 c1 80 00 00 00 49 81 c3 80 00 00 00 48 83 ea 40 e9 6a ff ff ff 48 85 d2 74 75 48 8b 4c 24 50 46 0f b7 0c 19 4c 8b 44 24 30 4c 8b 54 24 20 4d 85 d2 74 1d c4 c1 79 6e e9 49 8b 08 46 0f b7 0c 19 c5 f9 7e e9 41 01 c9 49 83 c0 08 49 ff ca 75 e3 4c 8b 44 24 10 4c 8b 14 24 4d 85 d2 74 20 c4 c1 79 6e e9 49 8b 08 46 0f b7 0c 19 c5 f9 7e e9 44 29 c9 41 89 c9 49 83 c0 08 49 ff ca 75 e0 66 44 89 08 48 83 c0 02 49 83 c3 02 48 ff ca eb 86 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 70'
+        Y.args_push(e)
+        local satir_i16_avx512bw='48 8b 44 24 60 48 8b 4c 24 50 48 8b 54 24 40 48 85 d2 0f 8c 79 03 00 00 48 83 7c 24 20 00 0f 8c 6d 03 00 00 48 83 3c 24 00 0f 8c 62 03 00 00 4d 31 db 48 81 fa 00 01 00 00 0f 8c 68 01 00 00 48 83 ec 20 c5 fa 7f 34 24 c5 fa 7f 7c 24 10 62 f1 ff 48 6f 01 62 f1 ff 48 6f 49 01 62 f1 ff 48 6f 51 02 62 f1 ff 48 6f 59 03 62 f1 ff 48 6f 61 04 62 f1 ff 48 6f 69 05 62 f1 ff 48 6f 71 06 62 f1 ff 48 6f 79 07 4c 8b 44 24 50 4c 8b 4c 24 40 4d 85 c9 74 4b 4d 8b 10 62 91 7d 48 fd 04 1a 62 91 75 48 fd 4c 1a 01 62 91 6d 48 fd 54 1a 02 62 91 65 48 fd 5c 1a 03 62 91 5d 48 fd 64 1a 04 62 91 55 48 fd 6c 1a 05 62 91 4d 48 fd 74 1a 06 62 91 45 48 fd 7c 1a 07 49 83 c0 08 49 ff c9 75 b5 4c 8b 44 24 30 4c 8b 4c 24 20 4d 85 c9 74 4b 4d 8b 10 62 91 7d 48 f9 04 1a 62 91 75 48 f9 4c 1a 01 62 91 6d 48 f9 54 1a 02 62 91 65 48 f9 5c 1a 03 62 91 5d 48 f9 64 1a 04 62 91 55 48 f9 6c 1a 05 62 91 4d 48 f9 74 1a 06 62 91 45 48 f9 7c 1a 07 49 83 c0 08 49 ff c9 75 b5 62 f1 ff 48 7f 00 62 f1 ff 48 7f 48 01 62 f1 ff 48 7f 50 02 62 f1 ff 48 7f 58 03 62 f1 ff 48 7f 60 04 62 f1 ff 48 7f 68 05 62 f1 ff 48 7f 70 06 62 f1 ff 48 7f 78 07 48 05 00 02 00 00 48 81 c1 00 02 00 00 49 81 c3 00 02 00 00 48 81 ea 00 01 00 00 48 81 fa 00 01 00 00 0f 8d b6 fe ff ff c5 fa 6f 34 24 c5 fa 6f 7c 24 10 48 83 c4 20 48 81 fa 80 00 00 00 0f 8c c9 00 00 00 62 f1 ff 48 6f 01 62 f1 ff 48 6f 49 01 62 f1 ff 48 6f 51 02 62 f1 ff 48 6f 59 03 4c 8b 44 24 30 4c 8b 4c 24 20 4d 85 c9 74 2b 4d 8b 10 62 91 7d 48 fd 04 1a 62 91 75 48 fd 4c 1a 01 62 91 6d 48 fd 54 1a 02 62 91 65 48 fd 5c 1a 03 49 83 c0 08 49 ff c9 75 d5 4c 8b 44 24 10 4c 8b 0c 24 4d 85 c9 74 2b 4d 8b 10 62 91 7d 48 f9 04 1a 62 91 75 48 f9 4c 1a 01 62 91 6d 48 f9 54 1a 02 62 91 65 48 f9 5c 1a 03 49 83 c0 08 49 ff c9 75 d5 62 f1 ff 48 7f 00 62 f1 ff 48 7f 48 01 62 f1 ff 48 7f 50 02 62 f1 ff 48 7f 58 03 48 05 00 01 00 00 48 81 c1 00 01 00 00 49 81 c3 00 01 00 00 48 81 ea 80 00 00 00 e9 2a ff ff ff 48 83 fa 40 0f 8c 8c 00 00 00 62 f1 ff 48 6f 01 62 f1 ff 48 6f 49 01 4c 8b 44 24 30 4c 8b 4c 24 20 4d 85 c9 74 1c 4d 8b 10 4d 01 da 62 d1 7d 48 fd 02 62 d1 75 48 fd 4a 01 49 83 c0 08 49 ff c9 75 e4 4c 8b 44 24 10 4c 8b 0c 24 4d 85 c9 74 1c 4d 8b 10 4d 01 da 62 d1 7d 48 f9 02 62 d1 75 48 f9 4a 01 49 83 c0 08 49 ff c9 75 e4 62 f1 ff 48 7f 00 62 f1 ff 48 7f 48 01 48 05 80 00 00 00 48 81 c1 80 00 00 00 49 81 c3 80 00 00 00 48 83 ea 40 e9 94 fe ff ff 48 85 d2 74 75 48 8b 4c 24 50 46 0f b7 0c 19 4c 8b 44 24 30 4c 8b 54 24 20 4d 85 d2 74 1d c4 c1 79 6e e9 49 8b 08 46 0f b7 0c 19 c5 f9 7e e9 41 01 c9 49 83 c0 08 49 ff ca 75 e3 4c 8b 44 24 10 4c 8b 14 24 4d 85 d2 74 20 c4 c1 79 6e e9 49 8b 08 46 0f b7 0c 19 c5 f9 7e e9 44 29 c9 41 89 c9 49 83 c0 08 49 ff ca 75 e0 66 44 89 08 48 83 c0 02 49 83 c3 02 48 ff ca eb 86 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 70'
         hex(satir_i16_avx512bw);jump(wide_done);mark(fallback)
       end
       if not arm and instruction=='auto' then
@@ -8089,14 +8316,14 @@ end
         if wide_done then mark(wide_done) end;return
       end
       if not arm and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw') then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
 
         local satir_i16_avx2='48 81 7c 24 40 80 00 00 00 0f 8c 8c 01 00 00 48 83 7c 24 20 00 0f 8c 80 01 00 00 48 83 3c 24 00 0f 8c 75 01 00 00 48 83 ec 20 c5 fa 7f 34 24 c5 fa 7f 7c 24 10 48 8b 84 24 80 00 00 00 48 8b 4c 24 70 48 8b 54 24 60 45 31 db c5 fe 6f 01 c5 fe 6f 49 20 c5 fe 6f 51 40 c5 fe 6f 59 60 c5 fe 6f a1 80 00 00 00 c5 fe 6f a9 a0 00 00 00 c5 fe 6f b1 c0 00 00 00 c5 fe 6f b9 e0 00 00 00 4c 8b 44 24 50 4c 8b 4c 24 40 4d 85 c9 74 4a 4d 8b 10 4d 01 da c4 c1 7d fd 02 c4 c1 75 fd 4a 20 c4 c1 6d fd 52 40 c4 c1 65 fd 5a 60 c4 c1 5d fd a2 80 00 00 00 c4 c1 55 fd aa a0 00 00 00 c4 c1 4d fd b2 c0 00 00 00 c4 c1 45 fd ba e0 00 00 00 49 83 c0 08 49 ff c9 75 b6 4c 8b 44 24 30 4c 8b 4c 24 20 4d 85 c9 74 4a 4d 8b 10 4d 01 da c4 c1 7d f9 02 c4 c1 75 f9 4a 20 c4 c1 6d f9 52 40 c4 c1 65 f9 5a 60 c4 c1 5d f9 a2 80 00 00 00 c4 c1 55 f9 aa a0 00 00 00 c4 c1 4d f9 b2 c0 00 00 00 c4 c1 45 f9 ba e0 00 00 00 49 83 c0 08 49 ff c9 75 b6 c5 fe 7f 00 c5 fe 7f 48 20 c5 fe 7f 50 40 c5 fe 7f 58 60 c5 fe 7f a0 80 00 00 00 c5 fe 7f a8 a0 00 00 00 c5 fe 7f b0 c0 00 00 00 c5 fe 7f b8 e0 00 00 00 48 05 00 01 00 00 48 81 c1 00 01 00 00 49 81 c3 00 01 00 00 48 81 ea 80 00 00 00 48 81 fa 80 00 00 00 0f 8d c0 fe ff ff c5 fa 6f 34 24 c5 fa 6f 7c 24 10 48 83 c4 20 eb 32 48 8b 44 24 60 48 8b 4c 24 50 48 8b 54 24 40 48 85 d2 0f 8c 4e 01 00 00 48 83 7c 24 20 00 0f 8c 42 01 00 00 48 83 3c 24 00 0f 8c 37 01 00 00 4d 31 db 48 83 fa 40 0f 8c ac 00 00 00 c5 fe 6f 01 c5 fe 6f 49 20 c5 fe 6f 51 40 c5 fe 6f 59 60 4c 8b 44 24 30 4c 8b 4c 24 20 4d 85 c9 74 26 4d 8b 10 4d 01 da c4 c1 7d fd 02 c4 c1 75 fd 4a 20 c4 c1 6d fd 52 40 c4 c1 65 fd 5a 60 49 83 c0 08 49 ff c9 75 da 4c 8b 44 24 10 4c 8b 0c 24 4d 85 c9 74 26 4d 8b 10 4d 01 da c4 c1 7d f9 02 c4 c1 75 f9 4a 20 c4 c1 6d f9 52 40 c4 c1 65 f9 5a 60 49 83 c0 08 49 ff c9 75 da c5 fe 7f 00 c5 fe 7f 48 20 c5 fe 7f 50 40 c5 fe 7f 58 60 48 05 80 00 00 00 48 81 c1 80 00 00 00 49 81 c3 80 00 00 00 48 83 ea 40 e9 4a ff ff ff 48 85 d2 74 75 48 8b 4c 24 50 46 0f b7 0c 19 4c 8b 44 24 30 4c 8b 54 24 20 4d 85 d2 74 1d c4 c1 79 6e e9 49 8b 08 46 0f b7 0c 19 c5 f9 7e e9 41 01 c9 49 83 c0 08 49 ff ca 75 e3 4c 8b 44 24 10 4c 8b 14 24 4d 85 d2 74 20 c4 c1 79 6e e9 49 8b 08 46 0f b7 0c 19 c5 f9 7e e9 44 29 c9 41 89 c9 49 83 c0 08 49 ff ca 75 e0 66 44 89 08 48 83 c0 02 49 83 c3 02 48 ff ca eb 86 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 70'
         hex(satir_i16_avx2);if wide_done then mark(wide_done) end;return
       end
       if arm and instruction=='neon' then
         if not e.yb_hazir then
-          for _,a in ipairs(e[3]) do generate(a);push() end
+          Y.args_push(e)
           for r=#e[3]-1,0,-1 do pop(r) end
         end
         local rows_neon='5f 00 00 f1 cb 13 00 54 9f 00 00 f1 8b 13 00 54 df 00 00 f1 4b 13 00 54 07 00 80 d2 5f 00 02 f1 8b 0a 00 54 30 44 40 ad 32 4c 41 ad 34 54 42 ad 36 5c 43 ad 38 64 44 ad 3a 6c 45 ad 3c 74 46 ad 3e 7c 47 ad e8 03 03 aa e9 03 04 aa a9 03 00 b4 0a 85 40 f8 4a 01 07 8b 40 05 40 ad 10 86 60 4e 31 86 61 4e 40 05 41 ad 52 86 60 4e 73 86 61 4e 40 05 42 ad 94 86 60 4e b5 86 61 4e 40 05 43 ad d6 86 60 4e f7 86 61 4e 40 05 44 ad 18 87 60 4e 39 87 61 4e 40 05 45 ad 5a 87 60 4e 7b 87 61 4e 40 05 46 ad 9c 87 60 4e bd 87 61 4e 40 05 47 ad de 87 60 4e ff 87 61 4e 29 05 00 f1 a1 fc ff 54 e8 03 05 aa e9 03 06 aa a9 03 00 b4 0a 85 40 f8 4a 01 07 8b 40 05 40 ad 10 86 60 6e 31 86 61 6e 40 05 41 ad 52 86 60 6e 73 86 61 6e 40 05 42 ad 94 86 60 6e b5 86 61 6e 40 05 43 ad d6 86 60 6e f7 86 61 6e 40 05 44 ad 18 87 60 6e 39 87 61 6e 40 05 45 ad 5a 87 60 6e 7b 87 61 6e 40 05 46 ad 9c 87 60 6e bd 87 61 6e 40 05 47 ad de 87 60 6e ff 87 61 6e 29 05 00 f1 a1 fc ff 54 10 44 00 ad 12 4c 01 ad 14 54 02 ad 16 5c 03 ad 18 64 04 ad 1a 6c 05 ad 1c 74 06 ad 1e 7c 07 ad 00 00 04 91 21 00 04 91 e7 00 04 91 42 00 02 d1 ac ff ff 17 5f 00 01 f1 4b 05 00 54 30 24 df 4c 34 24 df 4c e8 03 03 aa e9 03 04 aa e9 01 00 b4 0a 85 40 f8 4a 01 07 8b 40 25 df 4c 44 25 40 4c 10 86 60 4e 31 86 61 4e 52 86 62 4e 73 86 63 4e 94 86 64 4e b5 86 65 4e d6 86 66 4e f7 86 67 4e 29 05 00 f1 61 fe ff 54 e8 03 05 aa e9 03 06 aa e9 01 00 b4 0a 85 40 f8 4a 01 07 8b 40 25 df 4c 44 25 40 4c 10 86 60 6e 31 86 61 6e 52 86 62 6e 73 86 63 6e 94 86 64 6e b5 86 65 6e d6 86 66 6e f7 86 67 6e 29 05 00 f1 61 fe ff 54 10 24 9f 4c 14 24 9f 4c e7 00 02 91 42 00 01 d1 d6 ff ff 17 c2 02 00 b4 2b 24 40 78 e8 03 03 aa e9 03 04 aa c9 00 00 b4 0a 85 40 f8 4c 69 67 78 6b 01 0c 0b 29 05 00 f1 81 ff ff 54 e8 03 05 aa e9 03 06 aa c9 00 00 b4 0a 85 40 f8 4c 69 67 78 6b 01 0c 4b 29 05 00 f1 81 ff ff 54 0b 24 00 78 e7 08 00 91 42 04 00 d1 eb ff ff 17 00 00 80 d2 02 00 00 14 00 00 80 92'
@@ -8115,7 +8342,7 @@ end
         if wide_done then mark(wide_done) end;return
       end
       if not arm and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw') then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         local indis4_avx2='48 8b 4c 24 30 4c 8b 4c 24 20 48 8b 54 24 10 4c 8b 04 24 4d 85 c9 0f 8c c7 00 00 00 49 f7 c1 03 00 00 00 0f 85 ba 00 00 00 49 81 f9 00 00 04 00 0f 8f ad 00 00 00 4d 31 db c5 e1 ef db c5 d9 76 e4 c5 d9 71 d4 0f c5 d9 71 f4 03 c5 d5 ef ed 49 83 f9 20 7c 5b c5 d5 76 01 c5 fc 50 c0 35 ff 00 00 00 c1 e0 04 c4 c1 61 fd 14 00 c4 a1 7a 7f 14 5a c1 e8 04 41 89 c2 41 d1 ea 41 83 e2 55 44 29 d0 41 89 c2 41 c1 ea 02 41 83 e2 33 83 e0 33 44 01 d0 41 89 c2 41 c1 ea 04 44 01 d0 83 e0 0f 49 01 c3 c5 e1 fd dc 48 83 c1 20 49 83 e9 20 eb 9f 4c 8b 54 24 20 4d 29 ca 49 c1 ea 02 4d 85 c9 74 1d 66 46 89 14 5a 31 c0 83 39 00 0f 95 c0 49 01 c3 49 ff c2 48 83 c1 04 49 83 e9 04 75 e3 4c 89 d8 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 40'
 
         if Y.x64_popcnt then indis4_avx2='48 8b 4c 24 30 4c 8b 4c 24 20 48 8b 54 24 10 4c 8b 04 24 4d 85 c9 0f 8c 9d 00 00 00 49 f7 c1 03 00 00 00 0f 85 90 00 00 00 49 81 f9 00 00 04 00 0f 8f 83 00 00 00 4d 31 db c5 e1 ef db c5 d9 76 e4 c5 d9 71 d4 0f c5 d9 71 f4 03 c5 d5 ef ed 49 83 f9 20 7c 31 c5 d5 76 01 c5 fc 50 c0 35 ff 00 00 00 c1 e0 04 c4 c1 61 fd 14 00 c4 a1 7a 7f 14 5a f3 0f b8 c0 49 01 c3 c5 e1 fd dc 48 83 c1 20 49 83 e9 20 eb c9 4c 8b 54 24 20 4d 29 ca 49 c1 ea 02 4d 85 c9 74 1d 66 46 89 14 5a 31 c0 83 39 00 0f 95 c0 49 01 c3 49 ff c2 48 83 c1 04 49 83 e9 04 75 e3 4c 89 d8 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 40' end
@@ -8123,7 +8350,7 @@ end
       end
       if arm and instruction=='neon' then
         if not e.yb_hazir then
-          for _,a in ipairs(e[3]) do generate(a);push() end
+          Y.args_push(e)
           for r=#e[3]-1,0,-1 do pop(r) end
         end
         local indices_neon='3f 00 00 f1 cb 05 00 54 3f 04 40 f2 81 05 00 54 3f 00 41 f1 4c 05 00 54 e5 03 03 aa 03 00 80 d2 04 00 80 d2 64 05 00 9c 05 84 00 4f 06 85 00 4f 3f 80 00 f1 eb 02 00 54 00 a8 df 4c 00 8c a0 4e 21 8c a1 4e 02 28 61 0e 22 28 61 4e 42 1c 24 4e 42 b8 71 4e 46 3c 02 0e c0 00 27 1e 00 58 20 0e 00 b8 31 0e 07 3c 01 0e c6 ec 7c d3 a2 68 e6 3c 42 84 65 4e 48 04 03 8b 02 01 80 3d 63 00 07 8b 84 20 00 91 a5 84 66 4e 21 80 00 d1 e9 ff ff 17 21 01 00 b4 06 44 40 b8 48 04 03 8b 04 01 00 79 df 00 00 71 63 04 83 9a 84 04 00 91 21 10 00 d1 f8 ff ff 17 e0 03 03 aa 0a 00 00 14 00 00 80 92 08 00 00 14 1f 20 03 d5 1f 20 03 d5 1f 20 03 d5 01 00 02 00 04 00 08 00 10 00 20 00 40 00 80 00'
@@ -8140,7 +8367,7 @@ end
         generate({'call','__t_seyrek_karma_indis_düz',e[3],type='i64'});mark(done);return
       end
       if not arm and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw') then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         local mixed_sparse_avx2='48 83 7c 24 20 20 0f 85 7a 01 00 00 48 83 7c 24 30 00 0f 8c 6e 01 00 00 48 f7 44 24 30 03 00 00 00 0f 85 5f 01 00 00 4c 8b 0c 24 4d 85 c9 0f 8c 52 01 00 00 48 8b 4c 24 30 48 c1 e9 02 49 39 c9 0f 8f 40 01 00 00 48 83 ec 20 c5 fa 7f 34 24 c5 fa 7f 7c 24 10 48 8b 84 24 90 00 00 00 4c 8b 44 24 60 48 8b 54 24 70 4c 8b 94 24 80 00 00 00 4c 8b 5c 24 30 c4 c1 7e 6f 00 c4 c1 7e 6f 48 20 c4 c1 7e 6f 50 40 c4 c1 7e 6f 58 60 c5 d5 75 ed c5 d5 71 d5 0f 4d 85 c9 74 58 41 0f b7 0b c4 c1 79 6e 24 8a 48 8b 0c ca f6 c1 01 75 6b c4 e2 7d 58 e4 c4 e2 5d 04 31 c5 cd f5 f5 c5 fd fe c6 c4 e2 5d 04 71 20 c5 cd f5 f5 c5 f5 fe ce c4 e2 5d 04 71 40 c5 cd f5 f5 c5 ed fe d6 c4 e2 5d 04 71 60 c5 cd f5 f5 c5 e5 fe de 49 83 c3 02 49 ff c9 75 a8 c5 fe 7f 00 c5 fe 7f 48 20 c5 fe 7f 50 40 c5 fe 7f 58 60 c5 fa 6f 34 24 c5 fa 6f 7c 24 10 48 83 c4 20 31 c0 eb 76 48 ff c9 c4 e2 79 30 e4 c5 f9 70 fc 55 c4 e2 7d 58 e4 c4 e2 7d 58 ff c5 dd f5 31 c5 fd fe c6 c5 dd f5 71 20 c5 f5 fe ce c5 dd f5 71 40 c5 ed fe d6 c5 dd f5 71 60 c5 e5 fe de c5 c5 f5 b1 80 00 00 00 c5 fd fe c6 c5 c5 f5 b1 a0 00 00 00 c5 f5 fe ce c5 c5 f5 b1 c0 00 00 00 c5 ed fe d6 c5 c5 f5 b1 e0 00 00 00 c5 e5 fe de e9 62 ff ff ff 48 c7 c0 ff ff ff ff c5 f8 77 48 81 c4 80 00 00 00'
         hex(mixed_sparse_avx2);return
       end
@@ -8154,7 +8381,7 @@ end
         generate({'call','__t_seyrek_çift_indis_düz',e[3],type='i64'});mark(done);return
       end
       if not arm and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw') then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         local prepacked_sparse32_avx2='48 83 7c 24 20 20 0f 85 24 01 00 00 48 83 7c 24 30 00 0f 8c 18 01 00 00 48 f7 44 24 30 03 00 00 00 0f 85 09 01 00 00 4c 8b 0c 24 4d 85 c9 0f 8c fc 00 00 00 48 8b 4c 24 30 48 c1 e9 02 49 39 c9 0f 8f ea 00 00 00 48 83 ec 10 c5 fa 7f 34 24 48 8b 84 24 80 00 00 00 4c 8b 44 24 50 48 8b 54 24 60 4c 8b 54 24 70 4c 8b 5c 24 20 c4 c1 7e 6f 00 c4 c1 7e 6f 48 20 c4 c1 7e 6f 50 40 c4 c1 7e 6f 58 60 4d 85 c9 0f 84 85 00 00 00 41 0f b7 0b c4 c1 79 6e 24 8a 48 c1 e1 08 48 01 d1 c4 e2 79 30 e4 c5 f9 70 ec 55 c4 e2 7d 58 e4 c4 e2 7d 58 ed c5 dd f5 31 c5 fd fe c6 c5 dd f5 71 20 c5 f5 fe ce c5 dd f5 71 40 c5 ed fe d6 c5 dd f5 71 60 c5 e5 fe de c5 d5 f5 b1 80 00 00 00 c5 fd fe c6 c5 d5 f5 b1 a0 00 00 00 c5 f5 fe ce c5 d5 f5 b1 c0 00 00 00 c5 ed fe d6 c5 d5 f5 b1 e0 00 00 00 c5 e5 fe de 49 83 c3 02 49 ff c9 0f 85 7b ff ff ff c5 fe 7f 00 c5 fe 7f 48 20 c5 fe 7f 50 40 c5 fe 7f 58 60 c5 fa 6f 34 24 48 83 c4 10 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 81 c4 80 00 00 00'
         hex(prepacked_sparse32_avx2);return
       end
@@ -8169,7 +8396,7 @@ end
         generate({'call','__t_yoğun_çift_düz',e[3],type='i64'});mark(done);return
       end
       if not arm and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw') then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         local prepacked_dense16_avx2='48 83 3c 24 10 0f 85 94 00 00 00 4c 8b 4c 24 10 4d 85 c9 0f 8c 86 00 00 00 49 f7 c1 03 00 00 00 75 7d 48 8b 44 24 50 48 8b 4c 24 40 48 8b 54 24 30 4c 8b 44 24 20 c4 c1 7e 6f 00 c4 c1 7e 6f 48 20 4d 85 c9 74 4c c5 f9 6e 11 c4 e2 79 30 d2 c5 f9 70 da 55 c4 e2 7d 58 d2 c4 e2 7d 58 db c5 ed f5 22 c5 ed f5 6a 20 c5 fd fe c4 c5 f5 fe cd c5 e5 f5 62 40 c5 e5 f5 6a 60 c5 fd fe c4 c5 f5 fe cd 48 83 c1 04 48 81 c2 80 00 00 00 49 83 e9 04 75 b4 c5 fe 7f 00 c5 fe 7f 48 20 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 60'
         hex(prepacked_dense16_avx2);return
       end
@@ -8180,8 +8407,8 @@ end
       if not arm and (instruction=='avx512' or instruction=='avx512bw' or (instruction=='auto' and Y.avx512_auto)) then
         local fallback=label();wide_done=label()
         H.x64_cpu_dal(128,fallback)
-        for _,a in ipairs(e[3]) do generate(a);push() end
-        local seyrek_indis_vnni='48 8b 44 24 70 4c 8b 44 24 40 4c 8b 54 24 20 48 83 7c 24 30 00 0f 8c 28 01 00 00 48 f7 44 24 30 03 00 00 00 0f 85 19 01 00 00 4d 85 d2 0f 8e 10 01 00 00 49 f7 c2 0f 00 00 00 0f 85 03 01 00 00 4c 8b 0c 24 4d 85 c9 0f 8c f6 00 00 00 4c 8b 5c 24 30 49 c1 eb 02 4d 39 d9 0f 8f e4 00 00 00 49 f7 c2 1f 00 00 00 75 7b 62 d1 7e 48 6f 00 62 d1 7e 48 6f 48 01 48 8b 4c 24 10 4c 8b 0c 24 4d 85 c9 74 35 44 0f b7 19 48 8b 54 24 60 62 b2 7d 48 58 14 9a 4c 0f af 5c 24 20 49 c1 e3 02 4c 03 5c 24 50 62 d2 6d 48 50 03 62 d2 6d 48 50 4b 01 48 83 c1 02 49 ff c9 75 cb 62 f1 7e 48 7f 00 62 f1 7e 48 7f 48 01 48 81 44 24 50 80 00 00 00 48 05 80 00 00 00 49 81 c0 80 00 00 00 49 83 ea 20 75 87 eb 5c 62 d1 7e 48 6f 00 48 8b 4c 24 10 4c 8b 0c 24 4d 85 c9 74 2e 44 0f b7 19 48 8b 54 24 60 62 b2 7d 48 58 14 9a 4c 0f af 5c 24 20 49 c1 e3 02 4c 03 5c 24 50 62 d2 6d 48 50 03 48 83 c1 02 49 ff c9 75 d2 62 f1 7e 48 7f 00 48 83 44 24 50 40 48 83 c0 40 49 83 c0 40 49 83 ea 10 75 a4 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 ec 80'
+        Y.args_push(e)
+        local seyrek_indis_vnni='56 57 48 8b 84 24 80 00 00 00 4c 8b 54 24 30 48 83 7c 24 40 00 0f 8c 98 01 00 00 48 f7 44 24 40 03 00 00 00 0f 85 89 01 00 00 4d 85 d2 0f 8e 80 01 00 00 49 f7 c2 0f 00 00 00 0f 85 73 01 00 00 4c 8b 4c 24 10 4d 85 c9 0f 8c 65 01 00 00 4c 8b 5c 24 40 49 c1 eb 02 4d 39 d9 0f 8f 53 01 00 00 48 8b 54 24 70 48 8b 74 24 60 4a 8d 3c 95 00 00 00 00 49 f7 c2 1f 00 00 00 0f 85 dd 00 00 00 4c 8b 44 24 50 62 d1 7e 48 6f 00 62 d1 7e 48 6f 48 01 48 81 44 24 50 80 00 00 00 62 f1 65 48 ef db 62 f1 5d 48 ef e4 48 8b 4c 24 20 4c 8b 4c 24 10 49 f7 c1 01 00 00 00 74 25 44 0f b7 19 62 b2 7d 48 58 14 9a 4c 0f af df 62 b2 6d 48 50 04 1e 62 b2 6d 48 50 4c 1e 01 48 83 c1 02 49 ff c9 4d 85 c9 74 47 44 0f b7 19 44 0f b7 41 02 62 b2 7d 48 58 14 9a 62 b2 7d 48 58 2c 82 4c 0f af df 4c 0f af c7 62 b2 6d 48 50 04 1e 62 b2 6d 48 50 4c 1e 01 62 b2 55 48 50 1c 06 62 b2 55 48 50 64 06 01 48 83 c1 04 49 83 e9 02 75 b9 62 f1 7d 48 fe c3 62 f1 75 48 fe cc 62 f1 7e 48 7f 00 62 f1 7e 48 7f 48 01 48 81 c6 80 00 00 00 48 05 80 00 00 00 49 83 ea 20 0f 85 25 ff ff ff eb 53 4c 8b 44 24 50 62 d1 7e 48 6f 00 48 83 44 24 50 40 48 8b 4c 24 20 4c 8b 4c 24 10 4d 85 c9 74 1f 44 0f b7 19 62 b2 7d 48 58 14 9a 4c 0f af df 62 b2 6d 48 50 04 1e 48 83 c1 02 49 ff c9 75 e1 62 f1 7e 48 7f 00 48 83 c6 40 48 83 c0 40 49 83 ea 10 75 ad 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 5f 5e 48 83 ec 80'
         hex(seyrek_indis_vnni);jump(wide_done);mark(fallback)
       end
       if not arm and instruction=='auto' then
@@ -8192,7 +8419,7 @@ end
         if wide_done then mark(wide_done) end;return
       end
       if not arm and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw') then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
 
         local seyrek_indis_avx2='48 83 7c 24 20 20 0f 85 50 02 00 00 48 83 7c 24 30 00 0f 8c 2e 02 00 00 48 f7 44 24 30 03 00 00 00 0f 85 1f 02 00 00 4c 8b 0c 24 4d 85 c9 0f 8c 12 02 00 00 4c 8b 5c 24 30 49 c1 eb 02 4d 39 d9 0f 8f 00 02 00 00 48 83 ec 40 c5 fa 7f 34 24 c5 fa 7f 7c 24 10 c5 7a 7f 44 24 20 c5 7a 7f 4c 24 30 48 8b 84 24 b0 00 00 00 4c 8b 84 24 80 00 00 00 48 8b 4c 24 50 48 8b 94 24 a0 00 00 00 4c 8b 94 24 90 00 00 00 c5 fd ef c0 c5 f5 ef c9 c5 ed ef d2 c5 e5 ef db c5 dd ef e4 c5 d5 ef ed c5 cd ef f6 c5 c5 ef ff 4d 85 c9 0f 84 a2 00 00 00 44 0f b7 19 c4 22 79 58 04 9a c4 42 7d 30 c0 49 c1 e3 07 4d 01 d3 c4 42 7d 20 0b c4 41 35 f5 c8 c4 c1 7d fe c1 c4 42 7d 20 4b 10 c4 41 35 f5 c8 c4 c1 75 fe c9 c4 42 7d 20 4b 20 c4 41 35 f5 c8 c4 c1 6d fe d1 c4 42 7d 20 4b 30 c4 41 35 f5 c8 c4 c1 65 fe d9 c4 42 7d 20 4b 40 c4 41 35 f5 c8 c4 c1 5d fe e1 c4 42 7d 20 4b 50 c4 41 35 f5 c8 c4 c1 55 fe e9 c4 42 7d 20 4b 60 c4 41 35 f5 c8 c4 c1 4d fe f1 c4 42 7d 20 4b 70 c4 41 35 f5 c8 c4 c1 45 fe f9 48 83 c1 02 49 ff c9 0f 85 5e ff ff ff c4 e2 7d 02 c0 c4 c3 7d 39 c0 01 c4 c1 79 6c c0 c4 c1 79 fe 00 c5 fa 7f 00 c4 e2 75 02 c9 c4 c3 7d 39 c8 01 c4 c1 71 6c c8 c4 c1 71 fe 48 10 c5 fa 7f 48 10 c4 e2 6d 02 d2 c4 c3 7d 39 d0 01 c4 c1 69 6c d0 c4 c1 69 fe 50 20 c5 fa 7f 50 20 c4 e2 65 02 db c4 c3 7d 39 d8 01 c4 c1 61 6c d8 c4 c1 61 fe 58 30 c5 fa 7f 58 30 c4 e2 5d 02 e4 c4 c3 7d 39 e0 01 c4 c1 59 6c e0 c4 c1 59 fe 60 40 c5 fa 7f 60 40 c4 e2 55 02 ed c4 c3 7d 39 e8 01 c4 c1 51 6c e8 c4 c1 51 fe 68 50 c5 fa 7f 68 50 c4 e2 4d 02 f6 c4 c3 7d 39 f0 01 c4 c1 49 6c f0 c4 c1 49 fe 70 60 c5 fa 7f 70 60 c4 e2 45 02 ff c4 c3 7d 39 f8 01 c4 c1 41 6c f8 c4 c1 41 fe 78 70 c5 fa 7f 78 70 c5 fa 6f 34 24 c5 fa 6f 7c 24 10 c5 7a 6f 44 24 20 c5 7a 6f 4c 24 30 48 83 c4 40 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 81 c4 80 00 00 00 e9 70 01 00 00 48 8b 44 24 70 4c 8b 44 24 40 4c 8b 54 24 20 48 83 7c 24 30 00 0f 8c 47 01 00 00 48 f7 44 24 30 03 00 00 00 0f 85 38 01 00 00 4d 85 d2 0f 8e 2f 01 00 00 49 f7 c2 0f 00 00 00 0f 85 22 01 00 00 4c 8b 0c 24 4d 85 c9 0f 8c 15 01 00 00 4c 8b 5c 24 30 49 c1 eb 02 4d 39 d9 0f 8f 03 01 00 00 48 8b 4c 24 10 4c 8b 0c 24 c5 fd ef c0 c5 f5 ef c9 c5 ed ef d2 c5 e5 ef db 4d 85 c9 74 63 44 0f b7 19 48 8b 54 24 60 c4 a2 79 58 24 9a c4 e2 7d 30 e4 4c 0f af 5c 24 20 49 c1 e3 02 4c 03 5c 24 50 c4 c2 7d 20 2b c5 d5 f5 ec c5 fd fe c5 c4 c2 7d 20 6b 10 c5 d5 f5 ec c5 f5 fe cd c4 c2 7d 20 6b 20 c5 d5 f5 ec c5 ed fe d5 c4 c2 7d 20 6b 30 c5 d5 f5 ec c5 e5 fe dd 48 83 c1 02 49 ff c9 75 9d c4 e2 7d 02 c0 c4 e3 7d 39 c4 01 c5 f9 6c c4 c4 c1 79 fe 00 c5 fa 7f 00 c4 e2 75 02 c9 c4 e3 7d 39 cc 01 c5 f1 6c cc c4 c1 71 fe 48 10 c5 fa 7f 48 10 c4 e2 6d 02 d2 c4 e3 7d 39 d4 01 c5 e9 6c d4 c4 c1 69 fe 50 20 c5 fa 7f 50 20 c4 e2 65 02 db c4 e3 7d 39 dc 01 c5 e1 6c dc c4 c1 61 fe 58 30 c5 fa 7f 58 30 48 83 44 24 50 40 48 83 c0 40 49 83 c0 40 49 83 ea 10 0f 85 01 ff ff ff 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 ec 80'
         hex(seyrek_indis_avx2);if wide_done then mark(wide_done) end;return
@@ -8202,7 +8429,7 @@ end
         if e.yb_hazir then yb_cpu_dal(512,fallback) else
           generate({'!=',{'&',{'var','__t_cpu_cache',global=globals.__t_cpu_cache,type='u64'},{'num',512,type='u64'},type='u64',operand='u64'},{'num',0,type='u64'},type='i64',operand='u64'})
           jump(fallback,true)
-          for _,a in ipairs(e[3]) do generate(a);push() end
+          Y.args_push(e)
           for r=#e[3]-1,0,-1 do pop(r) end
         end
         local sparse_indis_i8mm='9f 00 00 f1 6b 13 00 54 9f 04 40 f2 21 13 00 54 bf 00 00 f1 ed 12 00 54 bf 0c 40 f2 a1 12 00 54 ff 00 00 f1 6b 12 00 54 8c fc 42 d3 ff 00 0c eb 0c 12 00 54 ed 03 06 aa ee 03 07 aa aa f4 7e d3 0b 00 80 d2 bf 10 40 f2 61 0a 00 54 70 28 df 4c 74 28 df 4c e6 03 0d aa 4f 08 0b 8b e8 03 0e aa 18 04 00 4f 19 04 00 4f 1a 04 00 4f 1b 04 00 4f 1c 04 00 4f 1d 04 00 4f 1e 04 00 4f 1f 04 00 4f 1f 09 00 f1 8b 04 00 54 cc 24 40 78 29 78 6c b8 87 3d 0a 9b 20 0d 04 4e e1 08 c1 ac 10 9c 81 4e 11 9c 82 4e e1 08 c1 ac 12 9c 81 4e 13 9c 82 4e e1 08 c1 ac 14 9c 81 4e 15 9c 82 4e e1 08 c1 ac 16 9c 81 4e 17 9c 82 4e cc 24 40 78 29 78 6c b8 87 3d 0a 9b 20 0d 04 4e e1 08 c1 ac 18 9c 81 4e 19 9c 82 4e e1 08 c1 ac 1a 9c 81 4e 1b 9c 82 4e e1 08 c1 ac 1c 9c 81 4e 1d 9c 82 4e e1 08 c1 ac 1e 9c 81 4e 1f 9c 82 4e 08 09 00 d1 1f 09 00 f1 ca fb ff 54 10 86 b8 4e 31 86 b9 4e 52 86 ba 4e 73 86 bb 4e 94 86 bc 4e b5 86 bd 4e d6 86 be 4e f7 86 bf 4e 48 02 00 b4 cc 24 40 78 29 78 6c b8 87 3d 0a 9b 20 0d 04 4e e1 20 40 4c ec 00 01 91 10 9c 81 4e 11 9c 82 4e 12 9c 83 4e 13 9c 84 4e 81 21 40 4c 14 9c 81 4e 15 9c 82 4e 16 9c 83 4e 17 9c 84 4e 08 05 00 f1 01 fe ff 54 10 28 9f 4c 14 28 9f 4c 6b 81 00 91 7f 01 05 eb 0b f6 ff 54 36 00 00 14 70 28 df 4c e6 03 0d aa 4f 08 0b 8b e8 03 0e aa 18 04 00 4f 19 04 00 4f 1a 04 00 4f 1b 04 00 4f 1f 09 00 f1 0b 03 00 54 cc 24 40 78 29 78 6c b8 87 3d 0a 9b 20 0d 04 4e e1 08 c1 ac 10 9c 81 4e 11 9c 82 4e e1 08 c1 ac 12 9c 81 4e 13 9c 82 4e cc 24 40 78 29 78 6c b8 87 3d 0a 9b 20 0d 04 4e e1 08 c1 ac 18 9c 81 4e 19 9c 82 4e e1 08 c1 ac 1a 9c 81 4e 1b 9c 82 4e 08 09 00 d1 1f 09 00 f1 4a fd ff 54 10 86 b8 4e 31 86 b9 4e 52 86 ba 4e 73 86 bb 4e 88 01 00 b4 cc 24 40 78 29 78 6c b8 87 3d 0a 9b 20 0d 04 4e e1 20 40 4c 10 9c 81 4e 11 9c 82 4e 12 9c 83 4e 13 9c 84 4e 08 05 00 f1 c1 fe ff 54 10 28 9f 4c 6b 41 00 91 7f 01 05 eb 8b f9 ff 54 00 00 80 d2 02 00 00 14 00 00 80 92'
@@ -8218,7 +8445,7 @@ end
         if e.yb_hazir then yb_cpu_dal(64,scalar_fallback) else
           generate({'!=',{'&',{'var','__t_cpu_cache',global=globals.__t_cpu_cache,type='u64'},{'num',64,type='u64'},type='u64',operand='u64'},{'num',0,type='u64'},type='i64',operand='u64'})
           jump(scalar_fallback,true)
-          for _,a in ipairs(e[3]) do generate(a);push() end
+          Y.args_push(e)
           for r=#e[3]-1,0,-1 do pop(r) end
         end
 
@@ -8238,7 +8465,7 @@ end
       end
       if not arm and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw') then
 
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         local sparse_avx2='48 8b 44 24 50 4c 8b 44 24 20 4c 8b 14 24 48 83 7c 24 10 00 0f 8c 2b 01 00 00 48 f7 44 24 10 03 00 00 00 0f 85 1c 01 00 00 4d 85 d2 0f 8e 13 01 00 00 49 f7 c2 0f 00 00 00 0f 85 06 01 00 00 48 8b 4c 24 40 48 8b 54 24 30 4c 8b 4c 24 10 c5 fd ef c0 c5 f5 ef c9 c5 ed ef d2 c5 e5 ef db 4d 85 c9 74 60 44 8b 19 45 85 db 74 46 c4 c1 79 6e e3 c5 f9 70 e4 00 c4 e2 7d 30 e4 c4 e2 7d 20 2a c5 d5 f5 ec c5 fd fe c5 c4 e2 7d 20 6a 10 c5 d5 f5 ec c5 f5 fe cd c4 e2 7d 20 6a 20 c5 d5 f5 ec c5 ed fe d5 c4 e2 7d 20 6a 30 c5 d5 f5 ec c5 e5 fe dd 4c 8b 1c 24 4a 8d 14 9a 48 83 c1 04 49 83 e9 04 75 a0 c4 e2 7d 02 c0 c4 e3 7d 39 c4 01 c5 f9 6c c4 c4 c1 79 fe 00 c5 fa 7f 00 c4 e2 75 02 c9 c4 e3 7d 39 cc 01 c5 f1 6c cc c4 c1 71 fe 48 10 c5 fa 7f 48 10 c4 e2 6d 02 d2 c4 e3 7d 39 d4 01 c5 e9 6c d4 c4 c1 69 fe 50 20 c5 fa 7f 50 20 c4 e2 65 02 db c4 e3 7d 39 dc 01 c5 e1 6c dc c4 c1 61 fe 58 30 c5 fa 7f 58 30 48 83 44 24 30 40 48 83 c0 40 49 83 c0 40 49 83 ea 10 0f 85 fe fe ff ff 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 60'
         hex(sparse_avx2);return
       end
@@ -8248,7 +8475,7 @@ end
         if e.yb_hazir then yb_cpu_dal(512,fallback) else
           generate({'!=',{'&',{'var','__t_cpu_cache',global=globals.__t_cpu_cache,type='u64'},{'num',512,type='u64'},type='u64',operand='u64'},{'num',0,type='u64'},type='i64',operand='u64'})
           jump(fallback,true)
-          for _,a in ipairs(e[3]) do generate(a);push() end
+          Y.args_push(e)
           for r=#e[3]-1,0,-1 do pop(r) end
         end
         local sparse_i8mm='9f 00 00 f1 cb 07 00 54 9f 04 40 f2 81 07 00 54 bf 00 00 f1 4d 07 00 54 bf 0c 40 f2 01 07 00 54 aa f4 7e d3 0b 00 80 d2 bf 10 40 f2 c1 03 00 54 70 28 df 4c 74 28 df 4c e6 03 01 aa 47 08 0b 8b e8 03 04 aa 48 02 00 b4 c9 44 40 b8 a9 01 00 34 20 0d 04 4e e1 20 40 4c ec 00 01 91 10 9c 81 4e 11 9c 82 4e 12 9c 83 4e 13 9c 84 4e 81 21 40 4c 14 9c 81 4e 15 9c 82 4e 16 9c 83 4e 17 9c 84 4e e7 00 0a 8b 08 11 00 f1 01 fe ff 54 10 28 9f 4c 14 28 9f 4c 6b 81 00 91 7f 01 05 eb ab fc ff 54 15 00 00 14 70 28 df 4c e6 03 01 aa 47 08 0b 8b e8 03 04 aa 88 01 00 b4 c9 44 40 b8 e9 00 00 34 20 0d 04 4e e1 20 40 4c 10 9c 81 4e 11 9c 82 4e 12 9c 83 4e 13 9c 84 4e e7 00 0a 8b 08 11 00 f1 c1 fe ff 54 10 28 9f 4c 6b 41 00 91 7f 01 05 eb ab fd ff 54 00 00 80 d2 02 00 00 14 00 00 80 92'
@@ -8267,7 +8494,7 @@ end
         jump(fallback,true)
         end
         if not e.yb_hazir then
-          for _,a in ipairs(e[3]) do generate(a);push() end
+          Y.args_push(e)
           for r=#e[3]-1,0,-1 do pop(r) end
         end
         hex('04 05 f8 b7 9f 08 40 f2 c1 04 00 54 bf 00 00 f1 8d 04 00 54 bf 0c 40 f2 41 04 00 54 01 e4 04 4f e8 03 05 aa 70 28 df 4c 14 04 00 4f 15 04 00 4f 16 04 00 4f 17 04 00 4f e6 03 01 aa e7 03 04 aa e7 01 00 b4 c0 84 40 fc 00 1c 21 2e 58 20 df 4c 5c 20 df 4c 10 e3 80 4f 31 e3 80 4f 52 e3 80 4f 73 e3 80 4f 94 e3 a0 4f b5 e3 a0 4f d6 e3 a0 4f f7 e3 a0 4f e7 20 00 f1 61 fe ff 54 10 86 b4 4e 31 86 b5 4e 52 86 b6 4e 73 86 b7 4e 10 28 9f 4c 08 41 00 f1 81 fc ff 54 00 00 80 d2 02 00 00 14 00 00 80 92')
@@ -8281,7 +8508,7 @@ end
 
       if arm and instruction=='neon' then
         if not e.yb_hazir then
-          for _,a in ipairs(e[3]) do generate(a);push() end
+          Y.args_push(e)
           for r=#e[3]-1,0,-1 do pop(r) end
         end
         hex('a3 03 f8 b7 7f 0c 40 f2 61 03 00 54 bf 00 00 f1 2d 03 00 54 c3 02 00 b4 00 04 00 4f 01 04 00 4f 02 04 00 4f 03 04 00 4f e6 03 01 aa e7 03 04 aa e8 03 05 aa e9 84 40 f8 24 0d 04 4e d0 28 40 4c c6 00 02 8b 00 96 a4 4e 21 96 a4 4e 42 96 a4 4e 63 96 a4 4e 08 05 00 f1 e1 fe ff 54 00 28 9f 4c 21 00 01 91 63 40 00 d1 eb ff ff 17 00 00 80 d2 02 00 00 14 00 00 80 92');return
@@ -8293,7 +8520,7 @@ end
       local word=special=='vektör_topla_çıkar_i16'
       if arm and instruction=='neon' then
         if not e.yb_hazir then
-          for _,a in ipairs(e[3]) do generate(a);push() end
+          Y.args_push(e)
           for r=#e[3]-1,0,-1 do pop(r) end
         end
         hex(word and '84 03 f8 b7 9f 80 00 f1 eb 01 00 54 20 20 df 4c 44 20 df 4c 70 20 df 4c 00 84 64 4e 21 84 65 4e 42 84 66 4e 63 84 67 4e 00 84 70 6e 21 84 71 6e 42 84 72 6e 63 84 73 6e 00 20 9f 4c 84 80 00 d1 f1 ff ff 17 24 01 00 b4 25 24 c0 78 46 24 c0 78 67 24 c0 78 a5 00 06 0b a5 00 07 4b 05 24 00 78 84 04 00 d1 f8 ff ff 17 00 00 80 d2 02 00 00 14 00 00 80 92' or '84 03 f8 b7 9f 40 00 f1 eb 01 00 54 20 20 df 4c 44 20 df 4c 70 20 df 4c 00 84 a4 4e 21 84 a5 4e 42 84 a6 4e 63 84 a7 4e 00 84 b0 6e 21 84 b1 6e 42 84 b2 6e 63 84 b3 6e 00 20 9f 4c 84 40 00 d1 f1 ff ff 17 24 01 00 b4 25 44 40 b8 46 44 40 b8 67 44 40 b8 a5 00 06 0b a5 00 07 4b 05 44 00 b8 84 04 00 d1 f8 ff ff 17 00 00 80 d2 02 00 00 14 00 00 80 92');return
@@ -8313,7 +8540,7 @@ end
     end
     if special=='böl_ekle_i32_u8' and instruction~='scalar' then
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 4 or 9);pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local profile=instruction=='avx512bw' and 'avx512' or instruction
@@ -8367,7 +8594,7 @@ end
 
     if special=='nokta_u8_i8_i32' and instruction~='scalar' then
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end;pop(2);pop(1);pop(0)
+        Y.args_push(e);pop(2);pop(1);pop(0)
       end
       local profile=instruction=='avx512' and 'avx2' or (instruction=='neon-base' and 'neon' or instruction)
       local loop,tail,scalar,done,zero,exit=label(),label(),label(),label(),label(),label()
@@ -8438,7 +8665,7 @@ end
         clip_body_avx512bw='62 d1 ff 48 6f 03 62 f1 7d 48 e1 c4 62 f1 7d 48 ee c1 62 f1 7d 48 ea c2 62 f2 7e 48 10 00',
         clip_tail='45 0f bf 13 41 d3 fa 45 31 c0 45 85 d2 45 0f 4c d0 45 39 ca 45 0f 4f d1 44 88 10',
       }
-      for _,a in ipairs(e[3]) do generate(a);push() end
+      Y.args_push(e)
       local bad,loop,tail,scalar,done,exit=label(),label(),label(),label(),label(),label()
       if mix then
 
@@ -8486,7 +8713,7 @@ end
         instruction='sse2';generate(e);instruction='auto';mark(done);return
       end
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local bad,loop,tail,scalar,done,exit=label(),label(),label(),label(),label(),label()
@@ -8549,7 +8776,7 @@ end
         instruction='sse2';generate(e);instruction='auto';mark(done);return
       end
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local bad,loop,tail,scalar,done,exit=label(),label(),label(),label(),label(),label()
@@ -8601,7 +8828,7 @@ end
     if special=='kırp_i32_u8' or special=='kare_kırp_i16_u8' then
       local square=special=='kare_kırp_i16_u8';local kind=square and 'square' or 'clip'
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 4 or 9);pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local bad,loop,tail,scalar,done,exit=label(),label(),label(),label(),label(),label()
@@ -8661,7 +8888,7 @@ end
     if special=='nokta_u8_i8' or special=='katla_u8_i8_i32' then
       local dot=special=='nokta_u8_i8'
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         if not dot then pop(arm and 3 or 8) end;pop(2);pop(1);pop(0)
       end
 
@@ -8820,6 +9047,11 @@ end
           hex('f7 c3 08 00 00 00');condition_branch(no_bmi1,0,0x84)
           hex('41 81 ca 00 04 00 00');mark(no_bmi1)
         end
+        if Y.x64_bmi2 then
+          local no_bmi2=label()
+          hex('f7 c3 00 01 00 00');condition_branch(no_bmi2,0,0x84)
+          hex('41 81 ca 00 08 00 00');mark(no_bmi2)
+        end
         hex('f7 c3 20 00 00 00');condition_branch(done,0,0x84)
         hex('41 83 ca 04')
         if Y.avx_vnni then
@@ -8862,7 +9094,7 @@ end
       return
     end
     if special=='atomik_oku' or special=='atomik_yaz' or special=='atomik_ekle' or special=='atomik_kıyas_değiştir' then
-      for _,a in ipairs(e[3]) do generate(a);push() end
+      Y.args_push(e)
       if #e[3]==3 then pop(2) end
       if #e[3]>=2 then pop(1) end;pop(0)
       if arm then
@@ -8887,7 +9119,7 @@ end
     end
     if special=='kırp_i16_u8' then
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local fail_label,done,scalar,loop=label(),label(),label(),label()
@@ -8927,7 +9159,7 @@ end
         if profile=='avx2' and (nn<32//element or (nn%(32//element)~=0 and nn%(16//element)==0)) then profile='sse2' end
       end
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local scalar,loop,done=label(),label(),label()
@@ -8956,6 +9188,38 @@ end
           u32(0x3dc00020 | (i<<10));u32(0x3dc00041 | (i<<10));u32(op);u32(0x3d800000 | (i<<10))
         end
         u32(0xd2800000);return
+      end
+      if not arm and width>1 and sabit and sabit>0 and sabit%width==0 and sabit//width<=8 then
+
+        local enc0={sse2='f3 0f 6f 01 f3 0f 6f 0a 66 0f fe c1 f3 0f 7f 00',avx='c5 fa 6f 01 c5 fa 6f 0a c5 f9 fe c1 c5 fa 7f 00',
+          avx2='c5 fe 6f 01 c5 fe 6f 0a c5 fd fe c1 c5 fe 7f 00',avx512='62 f1 7e 48 6f 01 62 f1 7e 48 6f 0a 62 f1 7d 48 fe c1 62 f1 7e 48 7f 00'}
+        local ops={add='fd',sub='f9',max='ee'}
+        local function wenc(prof)
+          local o=ops[maxop and 'max' or subtract and 'sub' or 'add']
+          if prof=='sse2' then return 'f3 0f 6f 01 f3 0f 6f 0a 66 0f '..o..' c1 f3 0f 7f 00'
+          elseif prof=='avx' then return 'c5 fa 6f 01 c5 fa 6f 0a c5 f9 '..o..' c1 c5 fa 7f 00'
+          elseif prof=='avx2' then return 'c5 fe 6f 01 c5 fe 6f 0a c5 fd '..o..' c1 c5 fe 7f 00'
+          else return '62 f1 ff 48 6f 01 62 f1 ff 48 6f 0a 62 f1 7d 48 '..o..' c1 62 f1 ff 48 7f 00' end
+        end
+        local tok={} for b in (word and wenc(profile) or enc0[profile]):gmatch('%S+') do tok[#tok+1]=b end
+        local i=1; local L={} while tok[i]~='01' do L[#L+1]=tok[i]; i=i+1 end; i=i+1
+        while tok[i]~='0a' do i=i+1 end; i=i+1
+        local OP={} while tok[i]~='c1' do OP[#OP+1]=tok[i]; i=i+1 end; OP[#OP+1]='c1'; i=i+1
+        local S={} while tok[i]~='00' do S[#S+1]=tok[i]; i=i+1 end
+        local evex=(profile=='avx512' or profile=='avx512bw'); local vl=width*element
+        local function mem(pre,reg,rm,o)
+          hex(table.concat(pre,' '))
+          if o==0 then bytes(string.char((reg<<3)|rm))
+          elseif evex and o%vl==0 and o//vl<128 then bytes(string.char(0x40|(reg<<3)|rm)); bytes(string.char(o//vl))
+          elseif not evex and o<128 then bytes(string.char(0x40|(reg<<3)|rm)); bytes(string.char(o))
+          else bytes(string.char(0x80|(reg<<3)|rm)); bytes(string.pack('<i4',o)) end
+        end
+        for k=0,sabit//width-1 do
+          local o=k*vl
+          mem(L,0,1,o); mem(L,1,2,o); hex(table.concat(OP,' ')); mem(S,0,0,o)
+        end
+        if profile~='sse2' then hex('c5 f8 77') end
+        hex('31 c0');return
       end
       if width>1 then
         if arm then
@@ -9026,7 +9290,7 @@ end
       local hizli=arm and instruction=='neon' or (not arm and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw'))
       if not hizli then generate({'call','__t_taşlar_havuz_i16_düz',e[3],type='i64'});return end
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 4 or 9);pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local tas,satir,relu,bitti=label(),label(),label(),label()
@@ -9070,7 +9334,7 @@ end
 
       if instruction=='scalar' then generate({'call','__t_taş_havuz_i16_düz',e[3],type='i64'});return end
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local dongu,bitti=label(),label()
@@ -9134,7 +9398,7 @@ end
 
       if instruction=='scalar' then generate({'call','__t_havuz_i16_düz',e[3],type='i64'});return end
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local dongu,bitti=label(),label()
@@ -9162,7 +9426,7 @@ end
 
       if instruction=='scalar' then generate({'call','__t_ekle_relu512_i32_i16_düz',e[3],type='i64'});return end
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local dongu,bitti=label(),label()
@@ -9187,7 +9451,7 @@ end
 
       if instruction=='scalar' then generate({'call','__t_yoğun_i16_düz',e[3],type='i64'});return end
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 4 or 9);pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local satir,ic,bitti=label(),label(),label()
@@ -9258,7 +9522,7 @@ end
     if special=='vektör_topla_i8_i16' or special=='vektör_çıkar_i8_i16' then
 
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local sub=special=='vektör_çıkar_i8_i16'
@@ -9312,7 +9576,7 @@ end
     if special=='vektör_topla_i16_i32' then
 
       if not e.yb_hazir then
-        for _,a in ipairs(e[3]) do generate(a);push() end
+        Y.args_push(e)
         pop(arm and 3 or 8);pop(2);pop(1);pop(0)
       end
       local profile=instruction
@@ -10120,6 +10384,7 @@ local function patch_global_addresses(text_base,global_base)
         patch(r[1]+4,r.opcode | (((dest%4096)//r.width)<<10))
       else patch(r[1]+4,0x91000000 | ((dest%4096)<<10) | (rd<<5) | rd) end
     else
+      dest=dest+(r.extra or 0)
       local d=dest-(text_base+r[1]+4+(r.bias or 0));if d< -2147483648 or d>2147483647 then fail('statik veri uzaklığı aşıldı') end
       patch(r[1],d)
     end

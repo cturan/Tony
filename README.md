@@ -20,11 +20,12 @@ Lua 5.4 or newer.
 
 ```
 lua t.lua tony.t --arch macos --cpu arm64 --instruction neon --gom netv3.tnns --output tony
-lua t.lua tony.t --arch linux --cpu x86_64 --instruction auto --gom netv3.tnns --output tony
-lua t.lua tony.t --arch windows --cpu x86_64 --instruction auto --gom netv3.tnns --output tony.exe
+lua t.lua tony.t --arch linux --cpu x86_64 --instruction avx2 --gom netv3.tnns --output tony
+lua t.lua tony.t --arch windows --cpu x86_64 --instruction avx2 --gom netv3.tnns --output tony.exe
 ```
 
-`--instruction` sets the instruction set. x86_64: `auto`, `sse2`, `avx`, `avx2`, `avx512`, `avx512bw`. arm64: `neon`, `scalar`.
+`--instruction` sets the instruction set. x86_64: `sse2`, `avx`, `avx2`, `avx512`, `avx512bw` (or `auto` for runtime dispatch). arm64: `neon`, `scalar`.
+
 
 AVX2 Windows build:
 
