@@ -1907,6 +1907,59 @@ işlev değişim(k:Konum,h:i64):i64 {
     dön kazanç[0];
 }
 
+işlev değişim_eşik(k:Konum,h:i64,eşik:i64):i64 {
+    ht:=hamle_türü(h); eğer ht==ROK { dön seç(eşik<=0,1,0); }
+    a:=kaynak(h); b:=hedef(h); biz:=k.sıra; t:=i64(k.tahta[a]); av:=alınan_taş(k,h);
+    s:=değişim_bedeli[av]+seç(ht>=4,değişim_bedeli[ht-2]-100,0)-eşik;
+    eğer s<0 { dön 0; }
+    o0:=(dolu(k)&~bit(a))|bit(b); x:=(1-biz)*6;
+    eğer ((piyon_alanı[biz*64+b]&k.bit_tahtası[x+1]) | (at_alanı[b]&k.bit_tahtası[x+2]) |
+        (fil_saldırısı(b,o0)&(k.bit_tahtası[x+3]|k.bit_tahtası[x+5])) |
+        (kale_saldırısı(b,o0)&(k.bit_tahtası[x+4]|k.bit_tahtası[x+5])) | (şah_alanı[b]&k.bit_tahtası[x+6]))==u64(0) { dön 1; }
+    yeni:=seç(ht>=4,biz*6+ht-2,t);
+
+    terfi_payı:=seç(b/8==0 || b/8==7,800,0);
+    eğer s-değişim_bedeli[tür(yeni)]-terfi_payı>=0 { dön 1; }
+    d:=yerel(DeğişimTahtası); bellek_kopyala(adres(d.taş),adres(k.bit_tahtası),104);
+    d.şah[0]=k.şah[0]; d.şah[1]=k.şah[1]; o:=dolu(k)&~bit(a);
+    s2:=seç(ht==GEÇERKEN,b+seç(biz==0,-8,8),b);
+    eğer av!=0 { d.taş[(1-biz)*6+av]&=~bit(s2); o&=~bit(s2); }
+    d.taş[t]&=~bit(a); d.taş[yeni]|=bit(b); o|=bit(b);
+    eğer tür(t)==6 { d.şah[biz]=b; }
+    n:=0; duran:=yeni; r:=1-biz;
+    iken n<30 && tür(duran)!=6 {
+        saldıran:=değişim_saldıran(d,b,r,o); seçilen:=-1; alınan:=0; terfi:=0;
+        yinele(c:=1;c<=6;c+=1) {
+            aday:=saldıran&d.taş[r*6+c];
+            iken aday!=u64(0) {
+                sq:=ilk_bit(i64(aday)); aday&=aday-u64(1); kaynak_bit:=bit(sq); hedef_bit:=bit(b);
+                gelen:=r*6+c; çıkan:=seç(c==1 && b/8==seç(r==0,7,0),r*6+5,gelen);
+                d.taş[gelen]&=~kaynak_bit; d.taş[duran]&=~hedef_bit; d.taş[çıkan]|=hedef_bit;
+                eski_şah:=d.şah[r]; eğer c==6 { d.şah[r]=b; }
+                uygun:=değişim_saldıran(d,d.şah[r],1-r,o&~kaynak_bit)==u64(0);
+                d.şah[r]=eski_şah; d.taş[çıkan]&=~hedef_bit; d.taş[duran]|=hedef_bit; d.taş[gelen]|=kaynak_bit;
+                eğer uygun { seçilen=sq; alınan=gelen; terfi=çıkan; kır; }
+            }
+            eğer seçilen>=0 { kır; }
+        }
+        eğer seçilen<0 { kır; }
+        n+=1; kazanç:=değişim_bedeli[tür(duran)]+değişim_bedeli[tür(terfi)]-değişim_bedeli[tür(alınan)];
+        eğer r==biz { s+=kazanç; } yoksa { s-=kazanç; }
+        d.taş[alınan]&=~bit(seçilen); d.taş[duran]&=~bit(b); d.taş[terfi]|=bit(b); o&=~bit(seçilen);
+        eğer tür(alınan)==6 { d.şah[r]=b; }
+        duran=terfi; r=1-r;
+
+        eğer r==biz {
+            eğer s>=0 { dön 1; }
+            eğer s+değişim_bedeli[tür(duran)]+terfi_payı<0 { dön 0; }
+        } yoksa {
+            eğer s<0 { dön 0; }
+            eğer s-değişim_bedeli[tür(duran)]-terfi_payı>=0 { dön 1; }
+        }
+    }
+    dön seç(s>=0,1,0);
+}
+
 sabit BUDAMA_TÜM=127;
 genel budama:i64=1;
 
@@ -2256,7 +2309,7 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
             pl:=l; yasal_alışlar(k,pl); sırala(a,pl,seç(tt_alış,öneri,0),kat,0); pg:=a.izler[kat];
             yinele(i:=0;i<pl.adet;i+=1) {
                 h:=sıradakini_seç(pl,i);
-                eğer h==hariç || değişim(k,h)<pc_beta-öz { sürdür; }
+                eğer h==hariç || !değişim_eşik(k,h,pc_beta-öz) { sürdür; }
                 hamle_yap(a,k,h,pg,kat);
                 puan:=-sessiz_ara(a,-pc_beta,-pc_beta+1,kat+1);
                 eğer puan>=pc_beta && !atomik_oku(&dur) { puan=-ara(a,derinlik-4,-pc_beta,-pc_beta+1,kat+1,!kesen); }
@@ -2336,8 +2389,8 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
                 eğer !şah_sorgusu(k,şs,h) {
                     eğer lmr_d<=5 && geçmiş < -ay[21]*derinlik { a.budadı[5]+=1; sürdür; }
                     eğer lmr_d<=8 && öz+(ay[22]+ay[23]*lmr_d)*güven/64<=alfa { a.budadı[4]+=1; sürdür; }
-                    eğer lmr_d<=6 && değişim(k,h) < -ay[24]*lmr_d*lmr_d { a.budadı[7]+=1; sürdür; }
-                } yoksa eğer derinlik<=8 && değişim(k,h) < -ay[25]*derinlik { a.budadı[7]+=1; sürdür; }
+                    eğer lmr_d<=6 && !değişim_eşik(k,h,-ay[24]*lmr_d*lmr_d) { a.budadı[7]+=1; sürdür; }
+                } yoksa eğer derinlik<=8 && !değişim_eşik(k,h,-ay[25]*derinlik) { a.budadı[7]+=1; sürdür; }
             } yoksa {
                 alış:=i64(l.alış[i]);
                 eğer derinlik<=8 && alış < -ay[26]*derinlik { a.budadı[7]+=1; sürdür; }
