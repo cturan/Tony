@@ -2056,7 +2056,7 @@ işlev sırala(a:Arayıcı,l:Hamleler,öneri:i64,kat:i64,ilk:i64) {
     yinele(i:=ilk;i<l.adet;i+=1) {
         h:=i64(l.hamle[i]); av:=alınan_taş(k,h); ht:=hamle_türü(h); taş:=i64(k.tahta[kaynak(h)]); değer:=0; l.alış[i]=i32(0);
 
-        eğer av!=0 && ht<4 && değişim_bedeli[av]<değişim_bedeli[tür(taş)] { l.alış[i]=i32(değişim(k,h)); }
+        eğer av!=0 && ht<4 && değişim_bedeli[av]<değişim_bedeli[tür(taş)] { l.alış[i]=i32(seç(değişim_eşik(k,h,0)!=0,0,-1)); }
         eğer h==öneri { değer=100000000; }
         yoksa eğer ht>=4 { değer=2000000+değişim_bedeli[ht-2]*100+değişim_bedeli[av]; }
         yoksa eğer av!=0 { değer=seç(l.alış[i]<i32(0),-1000000,1000000)+değişim_bedeli[av]*32+i64(a.alış_geçmişi[alış_yeri(taş,hedef(h),av)])/16; }
@@ -2393,7 +2393,8 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
                 } yoksa eğer derinlik<=8 && !değişim_eşik(k,h,-ay[25]*derinlik) { a.budadı[7]+=1; sürdür; }
             } yoksa {
                 alış:=i64(l.alış[i]);
-                eğer derinlik<=8 && alış < -ay[26]*derinlik { a.budadı[7]+=1; sürdür; }
+
+                eğer derinlik<=8 && (alış<0 || -ay[26]*derinlik>0) && !değişim_eşik(k,h,-ay[26]*derinlik) { a.budadı[7]+=1; sürdür; }
                 eğer lmr_d<=14 && ht<6 && öz+ay[27]+ay[28]*lmr_d+değişim_bedeli[av]+geçmiş/16<=alfa && !şah_sorgusu(k,şs,h) { a.budadı[0]+=1; sürdür; }
             }
         }
