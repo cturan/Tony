@@ -1392,6 +1392,7 @@ Y.bos_phi_blok_ele=os.getenv('YB_BOS_PHI_BLOK')~='0'
 Y.bic_ok=os.getenv('YB_BIC')~='0'
 Y.bit_sina=os.getenv('YB_BIT_SINA')~='0'
 Y.profil_yerlesim=os.getenv('YB_PROFIL_YERLESIM')~='0'
+
 Y.soguk_sona_ok=os.getenv('YB_SOGUK_SONA')=='1'
 Y.profil_agirlik=os.getenv('YB_PROFIL_AGIRLIK')~='0'
 Y.licm_ofset=os.getenv('YB_LICM_OFSET')~='0'
@@ -2631,10 +2632,14 @@ function A.yeni(f,E,H)
             elseif f.dokum[id] then M.yuva_sakla(t.sira-1,M.yuva_ofset(f.dokum[id])) end
           else
             local o=frame+16+(t.sira-9)*8
-            local r=hd or H.kazi[1]
-            if o//8<4096 then u32(0xf9400000|((o//8)<<10)|(29<<5)|r)
-            else E.immediate(o,H.kazi[3]); u32(0xf8606800|(H.kazi[3]<<16)|(29<<5)|r) end
-            if not hd and f.dokum[id] then M.yuva_sakla(r,M.yuva_ofset(f.dokum[id])) end
+
+            if hd then cift[#cift+1]={hd,nil,nil,o}
+            elseif f.dokum[id] then
+              local r=H.kazi[1]
+              if o//8<4096 then u32(0xf9400000|((o//8)<<10)|(29<<5)|r)
+              else E.immediate(o,H.kazi[3]); u32(0xf8606800|(H.kazi[3]<<16)|(29<<5)|r) end
+              M.yuva_sakla(r,M.yuva_ofset(f.dokum[id]))
+            end
           end
         end
       end
@@ -5044,10 +5049,37 @@ function X.yeni(f,E,H)
     M.hedef_bitir(t.id,d)
   end
 
+  function M.ymm_tasi(sakla,taban,ofset)
+    local Bn=(taban>=8) and 0 or 1
+    b1(0xc4); b1(0x80|0x40|(Bn<<5)|0x01); b1(0x7e); b1(sakla and 0x7f or 0x6f)
+    local mod=(ofset==0 and (taban&7)~=5) and 0 or ((ofset>=-128 and ofset<=127) and 1 or 2)
+    local sib=(taban&7)==4
+    b1((mod<<6)|(sib and 4 or (taban&7)))
+    if sib then b1(0x24) end
+    if mod==1 then b1(ofset&0xff) elseif mod==2 then i32(ofset) end
+  end
   function M.blok_bellek_uret(t,d)
     local rd=M.oku(t.a,1)
     local rs=t.b and M.oku(t.b,2) or nil
     local n=t.boy
+    if H.ymm_bellek and n>=64 and not t.tasi then
+
+      local o=0
+      if t.op=='bsifir' then
+        hex('c5 fd ef c0')
+        while n-o>=32 do M.ymm_tasi(true,rd,o); o=o+32 end
+        hex('c5 f8 77')
+        if n-o>=16 then hex('66 0f ef c0'); b1(0xf3); M.mr(false,0x0f7f,0,rd,nil,1,o); o=o+16 end
+        if n-o>=8 then local k=H.kazi[3]; M.anlik(0,k); M.mr(true,0x89,k,rd,nil,1,o); o=o+8 end
+      else
+        while n-o>=32 do M.ymm_tasi(false,rs,o); M.ymm_tasi(true,rd,o); o=o+32 end
+        hex('c5 f8 77')
+        if n-o>=16 then b1(0xf3); M.mr(false,0x0f6f,0,rs,nil,1,o); b1(0xf3); M.mr(false,0x0f7f,0,rd,nil,1,o); o=o+16 end
+        if n-o>=8 then local r=H.kazi[3]; M.mr(true,0x8b,r,rs,nil,1,o); M.mr(true,0x89,r,rd,nil,1,o); o=o+8 end
+      end
+      M.tasi(d,rd)
+      return
+    end
     local parca={}
     local o=0
     while n-o>=16 do parca[#parca+1]={o,16}; o=o+16 end
@@ -5120,6 +5152,14 @@ function X.yeni(f,E,H)
     Y.hiza_iste(f,E,b,H)
     E.mark(b.etiket)
     M.son_yuk=nil
+    if Y.sayac and E.sayac_global then
+
+      local L=Y.sayac.liste; local idx=#L
+      b1(0x48); b1(0xff); b1(0x05)
+      E.global_relocations[#E.global_relocations+1]={E.kod_boy(),E.sayac_global,extra=idx*8}; i32(0)
+      L[idx+1]={f.ad,b.no,E.kod_boy()}
+      M.sayac_kayit=L[idx+1]
+    end
     local n=#b.k
     for i=1,n do
       local t=f.d[b.k[i]]
@@ -5141,6 +5181,12 @@ function X.yeni(f,E,H)
       if sv then M.anlik(sv,0) else M.tasi(0,M.oku(son.a,1)) end
       E.jump(f.bitis)
     elseif son.op=='tuzak' then hex('0f 0b') end
+  end
+  local blok_uret_x64=M.blok_uret
+  function M.blok_uret(b,sonraki)
+    M.sayac_kayit=nil
+    blok_uret_x64(b,sonraki)
+    if M.sayac_kayit then M.sayac_kayit[4]=E.kod_boy() end
   end
 
   function M.uret()
@@ -5297,6 +5343,11 @@ function Y.x64_hedef(windows)
   H.yuk_katlama=true
   H.x64=true
   H.genel_katlama=os.getenv('YB_GENEL')~='0'
+
+  if Y.x64_ic_hizli and os.getenv('YB_X64_YMM')~='0' then
+    H.ymm_bellek=true
+    H.blok_bellek_genis=tonumber(os.getenv('YB_BLOK_GENIS') or '1024')
+  end
 
   if Y.x64_ic_hizli then
 
@@ -5839,6 +5890,7 @@ if windows and not modern then emit='exe' end
 if (windows or linux) and emit~='exe' then fail('Windows/Linux çıktısı doğrudan çalıştırılabilir; --emit exe kullanın') end
 instruction=instruction or (target=='arm64' and 'neon' or 'auto')
 if target=='arm64' and instruction=='auto' then instruction='neon' end
+if target=='x86_64' and os.getenv('YB_SOGUK_SONA')~='0' then Y.soguk_sona_ok=true end
 if instruction=='sse' then instruction='sse2' end
 if instruction=='avx-512' then instruction='avx512' end
 if instruction=='avx-512bw' then instruction='avx512bw' end
@@ -6348,6 +6400,7 @@ işlev büyük_sayfa_ayır(n:i64,üs:i64):adres {
     boy:=1<<üs;eğer n%boy!=0 || __t_large_min()!=boy { dön 0; }
     dön __t_virtual_alloc(0,n,536883200,4);
 }
+işlev büyük_sayfa_öner(p:adres,n:i64):i64 { dön -1; }
 işlev sistem_hata():i64 { dön i64(__t_last_error()); }
 ]] else
 runtime_mac=runtime_mac..[[
@@ -6389,6 +6442,11 @@ işlev büyük_sayfa_ayır(n:i64,üs:i64):adres {
     eğer üs<12 || üs>30 || n<=0 { dön 0; } boy:=1<<üs;eğer n%boy!=0 { dön 0; }
     p:=__t_mmap(0,n,3,34|262144|(üs<<26),-1,0);eğer adres_bitleri(p)==u64(-1) { dön 0; } dön p;
 }
+
+işlev büyük_sayfa_öner(p:adres,n:i64):i64 {
+    eğer p==0 || n<=0 { dön -1; }
+    dön __t_syscall(]]..(target=='arm64' and '233' or '28')..[[,p,n,14,0,0,0);
+}
 ]] or [[
 işlev bölge_ayır(n:i64):adres {
     eğer n<=0 { dön 0; } p:=__t_mmap(0,n,3,4098,-1,0);eğer adres_bitleri(p)==u64(-1) { dön 0; } dön p;
@@ -6401,6 +6459,7 @@ işlev büyük_sayfa_ayır(n:i64,üs:i64):adres {
     eğer üs!=21 || n<=0 || n%2097152!=0 { dön 0; }
     p:=__t_mmap(0,n,3,4098,131072,0);eğer adres_bitleri(p)==u64(-1) { dön 0; } dön p;
 }
+işlev büyük_sayfa_öner(p:adres,n:i64):i64 { dön -1; }
 ]])
 end
 
@@ -8806,7 +8865,15 @@ end
         jump(wide);mark(rest)
       end
       if profile~='scalar' then
-        hex(assert(snippets['init_'..profile]));mark(loop)
+        hex(assert(snippets['init_'..profile]))
+        if not arm and profile=='avx2' then
+
+          local l32,d32=label(),label();mark(l32)
+          hex('49 83 f8 20');condition_branch(d32,0,0x8c)
+          hex('c5 fe 6f 01 c5 fe 6f 61 20 c5 fe 6f 0a c5 fe 6f 6a 20 c5 fd ee c2 c5 dd ee e2 c5 f5 ee ca c5 d5 ee ea c5 fd ea c3 c5 dd ea e3 c5 f5 ea cb c5 d5 ea eb c5 fd d5 c1 c5 dd d5 e5 c5 fd 71 d0 08 c5 dd 71 d4 08 c5 fd 67 c4 c4 e3 fd 00 c0 d8 c5 fe 7f 00 48 83 c0 20 48 83 c1 40 48 83 c2 40 49 83 e8 20')
+          jump(l32);mark(d32)
+        end
+        mark(loop)
         if arm then u32(0xf100007f | (width<<10));condition_branch(tail,11,0)
         else hex('49 83 f8');bytes(string.char(width));condition_branch(tail,0,0x8c) end
         hex(assert(snippets['body_'..profile]))
