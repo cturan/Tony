@@ -5,7 +5,7 @@
 set -u
 cd "$(dirname "$0")"
 
-VERSION=0.5
+VERSION=0.6
 NET=netv3.tnns
 JOBS=${JOBS:-4}
 

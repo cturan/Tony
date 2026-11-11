@@ -8,9 +8,9 @@ Estimated strength is above 3400 Elo, but has not been officially measured.
 
 ## Download
 
-- [Windows x86_64 AVX2](https://github.com/cturan/Tony/releases/download/0.5/tony-0.5-windows-x86_64-avx2.exe)
-- [Windows x86_64 AVX](https://github.com/cturan/Tony/releases/download/0.5/tony-0.5-windows-x86_64-avx.exe)
-- [macOS Apple silicon](https://github.com/cturan/Tony/releases/download/0.5/tony-0.5-macos-arm64-neon)
+- [Windows x86_64 AVX2](https://github.com/cturan/Tony/releases/download/0.6/tony-0.6-windows-x86_64-avx2.exe)
+- [Windows x86_64 AVX](https://github.com/cturan/Tony/releases/download/0.6/tony-0.6-windows-x86_64-avx.exe)
+- [macOS Apple silicon](https://github.com/cturan/Tony/releases/download/0.6/tony-0.6-macos-arm64-neon)
 
 Other builds are on the [releases page](https://github.com/cturan/Tony/releases).
 

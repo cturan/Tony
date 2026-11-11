@@ -170,7 +170,7 @@ Y.blob={['seyrek_karma_indis_u8_i8_i32']=1,['seyrek_çift_indis_u8_i16_i32']=1,[
   ['vektör_enbüyük_i16']=1,['vektör_topla_i16_i32']=1,['yoğun_i16']=1,['havuz_i16']=1,['taş_havuz_i16']=1,['taşlar_havuz_i16']=1,
   ['yoğun_blok_u8_i8_i32']=1,['karışım_i32']=1,['nokta8_i16']=1,
   ['nokta_u8_i8_i32']=1,['böl_ekle_i32_u8']=1,['karışım4_i32']=1,
-  ['kaydır_kırp_i16_u8']=1,['ekle_relu512_i32_i16']=1,['çarp_kırp_i16_u8']=1,['kırp_çift_i32_u8']=1}
+  ['kaydır_kırp_i16_u8']=1,['ekle_relu512_i32_i16']=1,['çarp_kırp_i16_u8']=1,['kırp_çift_i32_u8']=1,['çarp_kırp_indis4_i16_u8']=1}
 
 local ikili_op={['+']='topla',['-']='cikar',['*']='carp',['&']='ve',['|']='veya',
   ['^']='xor',['<<']='sola',['>>']='saga',['/']='bol',['%']='kalan'}
@@ -3472,7 +3472,7 @@ function Y.derle(fn,E,H)
   for _,b in ipairs(f.duz) do
     for _,id in ipairs(b.k) do
       local t=f.d[id]
-      if t.op=='ic' then
+      if t.op=='ic' and H.x64 and not (H.ic_bozan and H.ic_bozan[t.ad]) and not (Y.x64_ic_hizli and Y.x64_dilim[t.ad]) then
         t.yuvalar={}
         for i=1,#t.args do
           f.yuva=(f.yuva+7)//8*8
@@ -3490,7 +3490,7 @@ function Y.derle(fn,E,H)
   return f
 end
 
-function Y.arm_hedef()
+function Y.arm_hedef(neon)
   local H={ucucu={0,1,2,3,4,5,6,7,8,9,10,11,12,13,14},
            kalici={19,20,21,22,23,24,25,26,27,28},
            abi={0,1,2,3,4,5,6,7},
@@ -3500,8 +3500,19 @@ function Y.arm_hedef()
 
   if os.getenv('YB_IC_BOZAN')~='0' then
     local az={0,1,2,3,4,5}
+    local az6={0,1,2,3,4,5,6}
     H.ic_bozan={['vektör_topla_i32']=az,['vektör_topla_i16']=az,['vektör_çıkar_i16']=az,
-                ['vektör_enbüyük_i16']=az,['vektör_topla_i16_i32']=az}
+                ['vektör_enbüyük_i16']=az,['vektör_topla_i16_i32']=az,
+                ['vektör_topla_i8_i16']=az,['vektör_çıkar_i8_i16']=az,
+                ['kırp_çift_i32_u8']=az6,['çarp_kırp_i16_u8']=az6}
+    if neon then
+      local az7={0,1,2,3,4,5,6,7}
+      H.ic_bozan['nokta_u8_i8_i32']=az
+      H.ic_bozan['vektör_topla_çıkar_i16']=az7
+      H.ic_bozan['vektör_topla_çıkar_i32']=az7
+      H.ic_bozan['indis4_u8']={0,1,2,3,4,5,6,7,8}
+      H.ic_bozan['çarp_kırp_indis4_i16_u8']={0,1,2,3,4,5,6,7,8,9,10}
+    end
   end
   for _,r in ipairs(H.kalici) do H.kalici_kume[r]=true end
   return H
@@ -5352,8 +5363,12 @@ function Y.x64_hedef(windows)
   if Y.x64_ic_hizli then
 
     local az={0,1,2,8,9,10}
+    local az11={0,1,2,8,9,10,11}
     H.ic_bozan={['vektör_topla_i32']=az,['vektör_topla_i16']=az,['vektör_çıkar_i16']=az,
-                ['vektör_enbüyük_i16']=az,['vektör_topla_i16_i32']=az}
+                ['vektör_enbüyük_i16']=az,['vektör_topla_i16_i32']=az,
+                ['vektör_topla_i8_i16']=az,['vektör_çıkar_i8_i16']=az,
+                ['nokta_u8_i8_i32']={0,1,2,8,10,11},
+                ['kırp_çift_i32_u8']=az11,['çarp_kırp_i16_u8']=az11}
   end
   H.popcnt=Y.x64_popcnt
   H.bmi1=Y.x64_bmi1
@@ -5940,7 +5955,7 @@ end
 Y.x64_ic_hizli=target=='x86_64' and os.getenv('YB_IC_HIZLI')~='0' and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw')
 
 Y.x64_dilim={['seyrek_karma_indis_u8_i8_i32']=1,['seyrek_çift_indis_u8_i16_i32']=1,['yoğun_çift_u8_i16_i32']=1,['satır_topla_çıkar_i16']=1,
-  ['indis4_u8']=1,['seyrek_blok_indis_u8_i8_i32']=1,['seyrek_blok_u8_i8_i32']=1,['çarp_kırp_i16_u8']=1,['kırp_çift_i32_u8']=1,
+  ['indis4_u8']=1,['çarp_kırp_indis4_i16_u8']=1,['seyrek_blok_indis_u8_i8_i32']=1,['seyrek_blok_u8_i8_i32']=1,['çarp_kırp_i16_u8']=1,['kırp_çift_i32_u8']=1,
   ['nokta_u8_i8_i32']=1,['yoğun_blok_u8_i8_i32']=1}
 Y.x64_popcnt=target=='x86_64' and os.getenv('YB_POPCNT')~='0' and
              (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw')
@@ -6223,6 +6238,25 @@ işlev __t_indis4_düz(x:adres,n:i64,dst:adres,tablo:adres):i64 {
     eğer n<0 || n%4!=0 || n>262144 { dön -1; }
     adet:=0;
     için(g:=0;g<n/4;g+=1) { u16_yaz(dst,adet,u16(g)); adet+=u32_oku(x,g)!=u32(0); }
+    dön adet;
+}
+işlev __t_çarp_kırp_indis4_düz(dst:adres,a:adres,b:adres,n:i64,indis:adres,tablo:adres,grup_taban:i64):i64 {
+    eğer n<0 || n%4!=0 || n>262144 || grup_taban<0 || grup_taban>65536 || grup_taban+n/4>65536 { dön -1; }
+    adet:=0;
+    için(g:=0;g<n/4;g+=1) {
+        p:=u32(0);
+        için(j:=0;j<4;j+=1) {
+            i:=g*4+j;
+            x:=i64(i16_oku(a,i)); y:=i64(i16_oku(b,i));
+            x=seç(x<0,0,seç(x>255,255,x));
+            y=seç(y<0,0,seç(y>255,255,y));
+            v:=(x*y)>>8;
+            bayt_yaz(dst,i,v);
+            p=p|(u32(v)<<u32(j*8));
+        }
+        u16_yaz(indis,adet,u16(grup_taban+g));
+        adet+=p!=u32(0);
+    }
     dön adet;
 }
 
@@ -7002,6 +7036,7 @@ local primitives={
  ['yoğun_çift_u8_i16_i32']={{'adres','adres','adres','adres','i64','i64'},'i64'},
  ['satır_topla_çıkar_i16']={{'adres','adres','i64','adres','i64','adres','i64'},'i64'},
  ['indis4_u8']={{'adres','i64','adres','adres'},'i64'},
+ ['çarp_kırp_indis4_i16_u8']={{'adres','adres','adres','i64','adres','adres','i64'},'i64'},
  ['çarp_kırp_i16_u8']={{'adres','adres','adres','i64'},'i64'},
  ['kırp_çift_i32_u8']={{'adres','adres','i64','i64'},'i64'},
  ['kırp_i32_u8']={{'adres','adres','i64','i64','i64'},'i64'},
@@ -7557,6 +7592,7 @@ local function visit_node(n)
     if n[2]=='işlemci_özellikleri' and target=='arm64' then visit_function('__t_arm_features')
     elseif n[2]=='satır_topla_çıkar_i16' then visit_function('__t_satırlar_i16_düz')
     elseif n[2]=='indis4_u8' then visit_function('__t_indis4_düz')
+    elseif n[2]=='çarp_kırp_indis4_i16_u8' then visit_function('__t_çarp_kırp_indis4_düz')
     elseif n[2]=='seyrek_karma_indis_u8_i8_i32' then visit_function('__t_seyrek_karma_indis_düz')
     elseif n[2]=='seyrek_çift_indis_u8_i16_i32' then visit_function('__t_seyrek_çift_indis_düz')
     elseif n[2]=='yoğun_çift_u8_i16_i32' then visit_function('__t_yoğun_çift_düz')
@@ -7622,6 +7658,9 @@ if arka=='yeni' or dokum then
     end
     local az_cagri=tonumber(os.getenv('YB_INLINE_AZ_CAGRI') or '2')
     local az_siniri=tonumber(os.getenv('YB_INLINE_AZ') or '160')
+    local x64_inline_ic={['vektör_topla_i32']=1,['vektör_topla_i16']=1,['vektör_çıkar_i16']=1,
+      ['vektör_enbüyük_i16']=1,['vektör_topla_i16_i32']=1,['vektör_topla_i8_i16']=1,
+      ['vektör_çıkar_i8_i16']=1,['nokta_u8_i8_i32']=1,['kırp_çift_i32_u8']=1,['çarp_kırp_i16_u8']=1}
     for _,fn in ipairs(functions) do
       local f=fn.ir
       Y.kopyalari_coz(f); Y.olu_ele(f)
@@ -7631,7 +7670,7 @@ if arka=='yeni' or dokum then
         for _,id in ipairs(b.k) do
           local t=f.d[id]
           if t.op=='cagri' and t.ad==fn[1] then ozyineli=true end
-          if t.op=='ic' and not (target=='arm64' and os.getenv('YB_INLINE_IC')~='0' and t.ad~='seyrek_çift_indis_u8_i16_i32' and t.ad~='yoğun_çift_u8_i16_i32' and t.ad~='seyrek_karma_indis_u8_i8_i32') then ozyineli=true end
+          if t.op=='ic' and not (os.getenv('YB_INLINE_IC')~='0' and ((target=='arm64' and t.ad~='seyrek_çift_indis_u8_i16_i32' and t.ad~='yoğun_çift_u8_i16_i32' and t.ad~='seyrek_karma_indis_u8_i8_i32' and t.ad~='çarp_kırp_indis4_i16_u8') or (Y.x64_ic_hizli and x64_inline_ic[t.ad]))) then ozyineli=true end
         end
       end
       if os.getenv('YB_INLINE_IZ') then io.stderr:write('INL '..fn[1]..' maliyet='..maliyet..' blok='..bloklar..'\n') end
@@ -8459,6 +8498,29 @@ end
       end
       generate({'call','__t_indis4_düz',e[3],type='i64'});return
     end
+    if special=='çarp_kırp_indis4_i16_u8' then
+      if not arm and instruction=='auto' then
+        local fallback,done=label(),label()
+        H.x64_cpu_dal(4,fallback)
+        instruction='avx2';generate(e);instruction='auto';jump(done);mark(fallback)
+        generate({'call','__t_çarp_kırp_indis4_düz',e[3],type='i64'});mark(done);return
+      end
+      if not arm and (instruction=='avx2' or instruction=='avx512' or instruction=='avx512bw') then
+        Y.args_push(e)
+        local carp_indis4_avx2='4c 8b 4c 24 30 48 8b 04 24 4d 85 c9 0f 8c b6 01 00 00 49 f7 c1 03 00 00 00 0f 85 a9 01 00 00 49 81 f9 00 00 04 00 0f 8f 9c 01 00 00 48 85 c0 0f 8c 93 01 00 00 48 3d 00 00 01 00 0f 8f 87 01 00 00 4c 89 c9 48 c1 e9 02 48 01 c1 48 81 f9 00 00 01 00 0f 8f 70 01 00 00 4d 85 c9 0f 84 63 01 00 00 4c 8b 44 24 60 48 8b 4c 24 50 48 8b 54 24 40 4c 8b 54 24 20 4c 8b 5c 24 10 c5 f9 6e e8 c4 e2 79 79 ed c5 dd ef e4 c5 e5 76 db c5 e5 71 d3 08 49 83 f9 20 0f 8c c2 00 00 00 c5 fe 6f 01 c5 fe 6f 0a c5 fd ee c4 c5 f5 ee cc c5 fd ea c3 c5 f5 ea cb c5 fd d5 c1 c5 fd 71 d0 08 c5 fe 6f 49 20 c5 fe 6f 52 20 c5 f5 ee cc c5 ed ee d4 c5 f5 ea cb c5 ed ea d3 c5 f5 d5 ca c5 f5 71 d1 08 c5 fd 67 c1 c4 e3 fd 00 c0 d8 c4 c1 7e 7f 00 c5 fd 76 c4 c5 fc 50 c0 35 ff 00 00 00 c1 e0 04 c4 c1 51 fd 14 03 c4 c1 7a 7f 12 c1 e8 04 41 89 c3 41 d1 eb 41 83 e3 55 44 29 d8 41 89 c3 41 c1 eb 02 41 83 e3 33 83 e0 33 44 01 d8 41 89 c3 41 c1 eb 04 44 01 d8 83 e0 0f 4c 8b 5c 24 10 4d 8d 14 42 c5 d1 fd 2d 91 00 00 00 48 83 c1 40 48 83 c2 40 49 83 c0 20 49 83 e9 20 e9 34 ff ff ff 4d 85 c9 74 56 c4 c1 79 7e eb c5 fa 7e 01 c5 fa 7e 0a c5 f9 ee c4 c5 f1 ee cc c5 f9 ea c3 c5 f1 ea cb c5 f9 d5 c1 c5 f9 71 d0 08 c5 f9 67 c4 c5 f9 7e c0 41 89 00 66 45 89 1a 85 c0 0f 95 c0 0f b6 c0 4d 8d 14 42 41 ff c3 48 83 c1 08 48 83 c2 08 49 83 c0 04 49 83 e9 04 75 af 4c 89 d0 48 2b 44 24 20 48 d1 e8 eb 0b 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 70 eb 10 08 00 08 00 08 00 08 00 08 00 08 00 08 00 08 00'
+        if Y.x64_popcnt then carp_indis4_avx2='4c 8b 4c 24 30 48 8b 04 24 4d 85 c9 0f 8c 8a 01 00 00 49 f7 c1 03 00 00 00 0f 85 7d 01 00 00 49 81 f9 00 00 04 00 0f 8f 70 01 00 00 48 85 c0 0f 8c 67 01 00 00 48 3d 00 00 01 00 0f 8f 5b 01 00 00 4c 89 c9 48 c1 e9 02 48 01 c1 48 81 f9 00 00 01 00 0f 8f 44 01 00 00 4d 85 c9 0f 84 37 01 00 00 4c 8b 44 24 60 48 8b 4c 24 50 48 8b 54 24 40 4c 8b 54 24 20 4c 8b 5c 24 10 c5 f9 6e e8 c4 e2 79 79 ed c5 dd ef e4 c5 e5 76 db c5 e5 71 d3 08 49 83 f9 20 0f 8c 96 00 00 00 c5 fe 6f 01 c5 fe 6f 0a c5 fd ee c4 c5 f5 ee cc c5 fd ea c3 c5 f5 ea cb c5 fd d5 c1 c5 fd 71 d0 08 c5 fe 6f 49 20 c5 fe 6f 52 20 c5 f5 ee cc c5 ed ee d4 c5 f5 ea cb c5 ed ea d3 c5 f5 d5 ca c5 f5 71 d1 08 c5 fd 67 c1 c4 e3 fd 00 c0 d8 c4 c1 7e 7f 00 c5 fd 76 c4 c5 fc 50 c0 35 ff 00 00 00 c1 e0 04 c4 c1 51 fd 14 03 c4 c1 7a 7f 12 c1 e8 04 f3 0f b8 c0 4d 8d 14 42 c5 d1 fd 2d 91 00 00 00 48 83 c1 40 48 83 c2 40 49 83 c0 20 49 83 e9 20 e9 60 ff ff ff 4d 85 c9 74 56 c4 c1 79 7e eb c5 fa 7e 01 c5 fa 7e 0a c5 f9 ee c4 c5 f1 ee cc c5 f9 ea c3 c5 f1 ea cb c5 f9 d5 c1 c5 f9 71 d0 08 c5 f9 67 c4 c5 f9 7e c0 41 89 00 66 45 89 1a 85 c0 0f 95 c0 0f b6 c0 4d 8d 14 42 41 ff c3 48 83 c1 08 48 83 c2 08 49 83 c0 04 49 83 e9 04 75 af 4c 89 d0 48 2b 44 24 20 48 d1 e8 eb 0b 31 c0 eb 07 48 c7 c0 ff ff ff ff c5 f8 77 48 83 c4 70 eb 10 08 00 08 00 08 00 08 00 08 00 08 00 08 00 08 00' end
+        hex(carp_indis4_avx2);return
+      end
+      if arm and instruction=='neon' then
+        if not e.yb_hazir then
+          Y.args_push(e)
+          for r=#e[3]-1,0,-1 do pop(r) end
+        end
+        local carp_indis4_neon='7f 00 00 f1 ab 09 00 54 7f 04 40 f2 61 09 00 54 7f 00 41 f1 2c 09 00 54 df 00 00 f1 eb 08 00 54 df 40 40 f1 ac 08 00 54 c7 08 43 8b ff 40 40 f1 4c 08 00 54 07 00 80 d2 c3 07 00 b4 30 08 00 9c d1 0c 02 4e 12 85 00 4f 7f 80 00 f1 2b 05 00 54 20 04 c1 ac 42 0c c1 ac 00 28 21 2e 20 28 21 6e 42 28 21 2e 62 28 21 6e 01 c0 22 2e 03 c0 22 6e 20 84 08 0f 60 84 08 4f 21 08 c1 ac 43 10 c1 ac 21 28 21 2e 41 28 21 6e 63 28 21 2e 83 28 21 6e 22 c0 23 2e 24 c0 23 6e 41 84 08 0f 81 84 08 4f 00 04 81 ac 00 8c a0 4e 21 8c a1 4e 02 28 61 0e 22 28 61 4e 42 1c 30 4e 43 58 20 4e 42 b8 71 4e 63 b8 31 4e 48 3c 02 0e 69 3c 01 0e a4 78 e8 3c 84 84 71 4e 8a 04 07 8b 44 01 80 3d e7 00 09 8b c6 20 00 91 31 86 72 4e 63 80 00 d1 d7 ff ff 17 03 02 00 b4 20 84 40 fc 41 84 40 fc 00 28 21 2e 21 28 21 2e 00 c0 21 2e 00 84 08 0f 00 44 00 bc 08 00 26 1e 8a 04 07 8b 46 01 00 79 1f 01 00 71 e7 04 87 9a c6 04 00 91 63 10 00 d1 f1 ff ff 17 e0 03 07 aa 07 00 00 14 00 00 80 92 05 00 00 14 01 00 02 00 04 00 08 00 10 00 20 00 40 00 80 00'
+        hex(carp_indis4_neon);return
+      end
+      generate({'call','__t_çarp_kırp_indis4_düz',e[3],type='i64'});return
+    end
 
     if special=='seyrek_karma_indis_u8_i8_i32' then
       if not arm and instruction=='auto' then
@@ -8685,10 +8747,14 @@ end
       jump(scalar);mark(done);generate({'num',0});jump(exit);mark(bad);generate({'num',-1});mark(exit);return
     end
     if arm and instruction=='neon' and special=='nokta_u8_i8_i32' then
-      local fallback,done=label(),label()
+      local dp_fallback,fallback,done=label(),label(),label()
+      if e.yb_hazir then yb_cpu_dal(512,dp_fallback) else
+        generate({'!=',{'&',{'var','__t_cpu_cache',global=globals.__t_cpu_cache,type='u64'},{'num',512,type='u64'},type='u64',operand='u64'},{'num',0,type='u64'},type='i64',operand='u64'})
+        jump(dp_fallback,true)
+      end;instruction='i8mm';generate(e);instruction='neon';jump(done);mark(dp_fallback)
       if e.yb_hazir then yb_cpu_dal(64,fallback) else
-      generate({'!=',{'&',{'var','__t_cpu_cache',global=globals.__t_cpu_cache,type='u64'},{'num',64,type='u64'},type='u64',operand='u64'},{'num',0,type='u64'},type='i64',operand='u64'})
-      jump(fallback,true)
+        generate({'!=',{'&',{'var','__t_cpu_cache',global=globals.__t_cpu_cache,type='u64'},{'num',64,type='u64'},type='u64',operand='u64'},{'num',0,type='u64'},type='i64',operand='u64'})
+        jump(fallback,true)
       end;instruction='dotprod';generate(e);instruction='neon';jump(done);mark(fallback)
       instruction='neon-base';generate(e);instruction='neon';mark(done);return
     end
@@ -8700,6 +8766,9 @@ end
       local profile=instruction=='avx512' and 'avx2' or (instruction=='neon-base' and 'neon' or instruction)
       local loop,tail,scalar,done,zero,exit=label(),label(),label(),label(),label(),label()
       local snippets={
+        init_i8mm='06 04 00 4f',
+        body_i8mm='00 00 c0 3d 21 00 c0 3d 06 9c 81 4e',
+        sum_i8mm='c6 b8 b1 4e c3 2c 04 4e',
         init_dotprod='06 04 00 4f 07 04 00 4f 22 e4 00 4f 03 e4 04 4f',
         body_dotprod='00 00 c0 3d 21 00 c0 3d 00 1c 23 6e 06 94 81 4e 47 94 81 4e',
         sum_dotprod='e7 54 27 4f c6 84 a7 4e c6 b8 b1 4e c3 2c 04 4e',
@@ -10153,7 +10222,7 @@ emit_block=function(b)
 end
 local unwind={}
 if arka=='yeni' then
-  local HD=arm and Y.arm_hedef() or Y.x64_hedef(windows)
+  local HD=arm and Y.arm_hedef(instruction=='neon') or Y.x64_hedef(windows)
   local E={
     u32=u32,hex=hex,bytes=bytes,label=label,mark=mark,jump=jump,
     immediate=immediate,normalize=normalize,external=external,

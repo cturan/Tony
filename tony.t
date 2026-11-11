@@ -19,7 +19,15 @@ yapı İz {
     tahta:u8[64]; dolu:u64; şah:u8[2];
 }
 
-yapı Hamleler { hamle:i64[512]; değer:i64[512]; alış:i32[512]; adet:i64; tehdit:i64; }
+yapı ŞahSorgusu { hedef:u64[7]; açan:u64; şah:i64; hazır:i64; özel:i64; }
+
+yapı Hamleler {
+    hamle:i64[512];
+    adet:i64; tehdit:i64; denenen:u16[64]; alışlar:u16[64]; şs_alan:u64[11]; ara_dolgu:u8[24];
+    değer:i32[512];
+    alış:i8[512];
+}
+işlev liste_şs(l:Hamleler):ŞahSorgusu { dön gör(ŞahSorgusu,adres(l.şs_alan)); }
 
 genel oyun:Konum;
 genel taş_anahtarı:u64[832];
@@ -75,6 +83,7 @@ işlev anahtarları_kur() {
     sıra_anahtarı=rastgele64(&tohum);
     yinele(i:=0;i<256;i+=1) { rok_anahtarı[i]=rastgele64(&tohum); }
     yinele(i:=0;i<8;i+=1) { geçer_anahtarı[i]=rastgele64(&tohum); }
+    ayar_tablolarını_kur();
 }
 işlev geometriyi_kur() {
     saldırı_çizgilerini_kur(); sihir_kur();
@@ -235,42 +244,63 @@ işlev konum_anahtarı(k:Konum):u64 {
     eğer geçer_yasal(k) { h^=geçer_anahtarı[k.geçer%8]; }
     dön h;
 }
+işlev taş_geri_koy(k:Konum,s:i64,t:i64) {
+    eski:=i64(k.tahta[s]); b:=bit(s);
+    eğer eski!=0 {
+        k.bit_tahtası[eski]^=b; k.renkler[renk(eski)]^=b;
+        eğer tür(eski)==6 { k.şah[renk(eski)]=-1; }
+    }
+    k.tahta[s]=u8(t);
+    eğer t!=0 {
+        k.bit_tahtası[t]|=b; k.renkler[renk(t)]|=b;
+        eğer tür(t)==6 { k.şah[renk(t)]=s; }
+    }
+}
 işlev ilerle(k:Konum,h:i64,g:İz) {
     g.adet=0; g.rok=k.rok; g.geçer=k.geçer; g.elli=k.elli; g.tam=k.tam;
     g.anahtar=k.anahtar; g.yol=k.yol; g.dönüşsüz=k.dönüşsüz;
     a:=kaynak(h); b:=hedef(h); ht:=hamle_türü(h); t:=i64(k.tahta[a]); r:=k.sıra;
-    k.anahtar^=hak_anahtarı(k);
-    eğer geçer_yasal(k) { k.anahtar^=geçer_anahtarı[k.geçer%8]; }
+    eğer k.geçer>=0 && geçer_yasal(k) { k.anahtar^=geçer_anahtarı[k.geçer%8]; }
     k.geçer=-1; k.elli+=1;
     eğer tür(t)==1 || (ht!=ROK && k.tahta[b]!=u8(0)) { k.elli=0; }
-    iz_kare(k,g,a); iz_kare(k,g,b);
     eğer ht==ROK {
         son:=r*56+seç(b>a,6,2); kale_son:=r*56+seç(b>a,5,3);
-        iz_kare(k,g,son); iz_kare(k,g,kale_son);
+        iz_kare(k,g,a); iz_kare(k,g,b); iz_kare(k,g,son); iz_kare(k,g,kale_son);
         taş_koy(k,a,0); taş_koy(k,b,0); taş_koy(k,son,t); taş_koy(k,kale_son,r*6+4);
+        yinele(i:=0;i<g.adet;i+=1) { g.yeni[i]=k.tahta[i64(g.kare[i])]; }
     } yoksa {
+        g.kare[0]=u8(a); g.taş[0]=u8(t); g.yeni[0]=u8(0);
+        g.kare[1]=u8(b); g.taş[1]=k.tahta[b];
         taş_koy(k,a,0);
-        eğer ht==GEÇERKEN { s:=b+seç(r==0,-8,8); iz_kare(k,g,s); taş_koy(k,s,0); }
-        taş_koy(k,b,seç(ht>=4,r*6+ht-2,t));
+        eğer ht==GEÇERKEN {
+            s:=b+seç(r==0,-8,8);
+            g.kare[2]=u8(s); g.taş[2]=k.tahta[s]; g.yeni[2]=u8(0); g.adet=3;
+            taş_koy(k,s,0);
+        } yoksa { g.adet=2; }
+        yeni_t:=seç(ht>=4,r*6+ht-2,t);
+        taş_koy(k,b,yeni_t); g.yeni[1]=u8(yeni_t);
         eğer ht==YARIM { k.geçer=(a+b)/2; }
     }
-    yinele(i:=0;i<4;i+=1) {
-        eğer (tür(t)==6 && i/2==r) || a==k.rok_kalesi[i] || b==k.rok_kalesi[i] { k.rok&=~(1<<i); }
+    eğer k.rok!=0 {
+        yinele(i:=0;i<4;i+=1) {
+            eğer (k.rok&(1<<i))!=0 && ((tür(t)==6 && i/2==r) || a==k.rok_kalesi[i] || b==k.rok_kalesi[i]) {
+                k.rok&=~(1<<i); k.anahtar^=rok_anahtarı[i*64+k.rok_kalesi[i]];
+            }
+        }
     }
     k.sıra=1-r; k.tam+=r;
-    k.anahtar^=sıra_anahtarı^hak_anahtarı(k);
-    eğer geçer_yasal(k) { k.anahtar^=geçer_anahtarı[k.geçer%8]; }
+    k.anahtar^=sıra_anahtarı;
+    eğer ht==YARIM && geçer_yasal(k) { k.anahtar^=geçer_anahtarı[k.geçer%8]; }
     eğer k.elli==0 || k.rok!=g.rok { k.dönüşsüz=k.iz_sayısı; k.yol=u64(0); }
     k.yol=döndür_sola(k.yol,7)^k.anahtar;
     k.geçmiş[k.iz_sayısı]=k.anahtar; k.iz_sayısı+=1;
-    yinele(i:=0;i<g.adet;i+=1) { g.yeni[i]=k.tahta[i64(g.kare[i])]; }
     bellek_kopyala(adres(g.tahta),adres(k.tahta),64); g.dolu=dolu(k);
     g.şah[0]=u8(k.şah[0]); g.şah[1]=u8(k.şah[1]);
     eğer k.ağ_etkin { ağ_tazele(k); }
 }
 işlev geri(k:Konum,g:İz) {
 
-    yinele(i:=g.adet-1;i>=0;i-=1) { taş_koy(k,i64(g.kare[i]),i64(g.taş[i])); }
+    yinele(i:=g.adet-1;i>=0;i-=1) { taş_geri_koy(k,i64(g.kare[i]),i64(g.taş[i])); }
     k.sıra=1-k.sıra; k.rok=g.rok; k.geçer=g.geçer; k.elli=g.elli; k.tam=g.tam;
     k.anahtar=g.anahtar; k.yol=g.yol; k.dönüşsüz=g.dönüşsüz; k.iz_sayısı-=1;
     eğer k.ağ_etkin { ağ_tazele(k); }
@@ -340,7 +370,7 @@ işlev piyon_hedefi_n(l:Hamleler,n:i64,a:i64,b:i64,t:i64):i64 {
     dön n;
 }
 işlev taslak_hamleler(k:Konum,l:Hamleler) {
-    n:=0; r:=k.sıra; d:=dolu(k); dost:=k.renkler[r]; düşman:=k.renkler[1-r]&~k.bit_tahtası[(1-r)*6+6];
+    n:=0; r:=k.sıra; d:=dolu(k); dost:=k.renkler[r]; düşman:=k.renkler[1-r]&~k.bit_tahtası[(1-r)*6+6]; hedef_maske:=~dost&~k.bit_tahtası[(1-r)*6+6];
     taşlar:=dost;
     iken taşlar!=u64(0) {
         a:=ilk_bit(i64(taşlar)); taşlar&=taşlar-u64(1); t:=i64(k.tahta[a])-r*6;
@@ -354,7 +384,7 @@ işlev taslak_hamleler(k:Konum,l:Hamleler) {
             iken av!=u64(0) { b=ilk_bit(i64(av)); av&=av-u64(1); n=piyon_hedefi_n(l,n,a,b,0); }
             eğer k.geçer>=0 && (piyon_alanı[r*64+a]&bit(k.geçer))!=u64(0) { l.hamle[n]=hamle_yapısı(a,k.geçer,GEÇERKEN); n+=1; }
         } yoksa {
-            alan:=saldırı(t,a,d,r)&~dost&~k.bit_tahtası[(1-r)*6+6];
+            alan:=saldırı(t,a,d,r)&hedef_maske;
             iken alan!=u64(0) { b:=ilk_bit(i64(alan)); alan&=alan-u64(1); l.hamle[n]=hamle_yapısı(a,b,0); n+=1; }
         }
     }
@@ -362,8 +392,8 @@ işlev taslak_hamleler(k:Konum,l:Hamleler) {
     l.adet=n;
 }
 
-işlev taslak_alışlar(k:Konum,l:Hamleler) {
-    n:=0; r:=k.sıra; d:=dolu(k); dost:=k.renkler[r]; düşman:=k.renkler[1-r]&~k.bit_tahtası[(1-r)*6+6];
+işlev taslak_alışlar_aralık(k:Konum,l:Hamleler,ilk:i64) {
+    n:=ilk; r:=k.sıra; d:=dolu(k); dost:=k.renkler[r]; düşman:=k.renkler[1-r]&~k.bit_tahtası[(1-r)*6+6];
     taşlar:=dost;
     iken taşlar!=u64(0) {
         a:=ilk_bit(i64(taşlar)); taşlar&=taşlar-u64(1); t:=i64(k.tahta[a])-r*6;
@@ -377,6 +407,50 @@ işlev taslak_alışlar(k:Konum,l:Hamleler) {
             alan:=saldırı(t,a,d,r)&düşman;
             iken alan!=u64(0) { b:=ilk_bit(i64(alan)); alan&=alan-u64(1); l.hamle[n]=hamle_yapısı(a,b,0); n+=1; }
         }
+    }
+    l.adet=n;
+}
+işlev taslak_alışlar(k:Konum,l:Hamleler) { taslak_alışlar_aralık(k,l,0); }
+işlev şahsız_çivililer(k:Konum):u64 {
+    r:=k.sıra; şah:=k.şah[r]; d:=dolu(k); düşman:=(1-r)*6; çivililer:u64:=0;
+    ışıncılar:=(kale_ışını[şah]&(k.bit_tahtası[düşman+4]|k.bit_tahtası[düşman+5])) |
+        (fil_ışını[şah]&(k.bit_tahtası[düşman+3]|k.bit_tahtası[düşman+5]));
+    iken ışıncılar!=u64(0) {
+        s:=ilk_bit(i64(ışıncılar)); ışıncılar&=ışıncılar-u64(1);
+        arada:=aradaki_kareler[şah*64+s]&d;
+        eğer (arada&(arada-u64(1)))==u64(0) { çivililer|=arada&k.renkler[r]; }
+    }
+    dön çivililer;
+}
+
+işlev yasallaştır_şahsız_aralık(k:Konum,l:Hamleler,ilk:i64,atla:i64,çivililer:u64) {
+    n:=ilk; r:=k.sıra; şah:=k.şah[r]; d:=dolu(k); l.tehdit=0;
+    eğer çivililer==u64(0) && k.geçer<0 && atla==0 {
+        yinele(i:=ilk;i<l.adet;i+=1) {
+            h:=i64(l.hamle[i]); uygun:=1;
+            eğer kaynak(h)==şah && hamle_türü(h)!=ROK {
+                b:=hedef(h); yeni_d:=(d&~bit(şah))|bit(b);
+                uygun=(saldıranlar(k,b,1-r,yeni_d)&~bit(b))==u64(0);
+            }
+            eğer uygun { l.hamle[n]=h; n+=1; }
+        }
+        l.adet=n; dön 0;
+    }
+    yinele(i:=ilk;i<l.adet;i+=1) {
+        h:=i64(l.hamle[i]);
+        eğer h==atla { sürdür; }
+        a:=kaynak(h); b:=hedef(h); ht:=hamle_türü(h); uygun:=1;
+        eğer ht==ROK { uygun=1; }
+        yoksa eğer a==şah {
+            yeni_d:=(d&~bit(a))|bit(b);
+            uygun=(saldıranlar(k,b,1-r,yeni_d)&~bit(b))==u64(0);
+        } yoksa eğer ht==GEÇERKEN {
+            alınan:=b+seç(r==0,-8,8); yeni_d:=(d&~(bit(a)|bit(alınan)))|bit(b);
+            uygun=(saldıranlar(k,şah,1-r,yeni_d)&~bit(alınan))==u64(0);
+        } yoksa eğer (çivililer&bit(a))!=u64(0) {
+            uygun=(aynı_hat[şah*64+a]&bit(b))!=u64(0);
+        }
+        eğer uygun { l.hamle[n]=h; n+=1; }
     }
     l.adet=n;
 }
@@ -691,7 +765,7 @@ genel s8_w1p:i8[2129920]; genel s8_w2p:i8[131072]; genel s8_b1p:i32[1024]; genel
 
 genel s8_w1s:i8[2129920]; genel s8_seyrek:i64=0;
 
-genel s8_toplu_etkin:i64=0; genel s8_indis_tablo:u16[2048]; genel s8_w1g:i8[2129920]; genel s8_grup_etkin:i64=0;
+genel s8_toplu_etkin:i64=0; genel s8_indis_tablo:u16[2048]; genel s8_w1g:i8[2129920]; genel s8_grup_etkin:i64=0; genel s8_hızlı_etkin:i64=0;
 genel s8_L2:i64=16;
 genel tr_taban:i32[768]; genel tr_sıra:u8[49152]; genel tr_çift:i64=0; genel tr_hazır:i64=0;
 işlev tr_hedef_mi(sınıf:i64,o:i64,t:i64):i64 {
@@ -940,7 +1014,7 @@ işlev tr_liste_saldıran(a0:S8Satırlar,a1:S8Satırlar,bayrak:i64,çevler:i64,t
         d0:=seç(ekle,adres(a0.ek),adres(a0.çıkar)); n0:=seç(ekle,a0.ne,a0.nc); x:=h;
         iken x!=u64(0) {
             q:=ilk_bit(i64(x)); x&=x-u64(1);
-            adres_yaz(d0,n0,adres_ekle(B0,tr_ofs_sıra[i64(bayt_oku(S0,q^ç0))]+tr_ofs_t0[i64(bayt_oku(tahta,q))])); n0+=1;
+            { öw:=adres_ekle(B0,tr_ofs_sıra[i64(bayt_oku(S0,q^ç0))]+tr_ofs_t0[i64(bayt_oku(tahta,q))]); öngetir(öw); öngetir(adres_ekle(öw,64)); öngetir(adres_ekle(öw,128)); öngetir(adres_ekle(öw,192)); adres_yaz(d0,n0,öw); } n0+=1;
         }
         eğer ekle { a0.ne=n0; } yoksa { a0.nc=n0; }
     }
@@ -950,7 +1024,7 @@ işlev tr_liste_saldıran(a0:S8Satırlar,a1:S8Satırlar,bayrak:i64,çevler:i64,t
         d1:=seç(ekle,adres(a1.ek),adres(a1.çıkar)); n1:=seç(ekle,a1.ne,a1.nc); x:=h;
         iken x!=u64(0) {
             q:=ilk_bit(i64(x)); x&=x-u64(1);
-            adres_yaz(d1,n1,adres_ekle(B1,tr_ofs_sıra[i64(bayt_oku(S1,q^ç1))]+tr_ofs_t1[i64(bayt_oku(tahta,q))])); n1+=1;
+            { öw:=adres_ekle(B1,tr_ofs_sıra[i64(bayt_oku(S1,q^ç1))]+tr_ofs_t1[i64(bayt_oku(tahta,q))]); öngetir(öw); öngetir(adres_ekle(öw,64)); öngetir(adres_ekle(öw,128)); öngetir(adres_ekle(öw,192)); adres_yaz(d1,n1,öw); } n1+=1;
         }
         eğer ekle { a1.ne=n1; } yoksa { a1.nc=n1; }
     }
@@ -968,18 +1042,18 @@ işlev tr_liste_fark(a0:S8Satırlar,a1:S8Satırlar,bayrak:i64,çevler:i64,eski:a
         ç0:=çevler&255; s0:=(r*6+k-1)*64+(s^ç0);
         B0:=adres_ekle(taban,i64(tr_taban[s0])*12*adım); S0:=adres_ekle(adres(tr_sıra),s0*64);
         n:=a0.nc; x:=çık; d:=adres(a0.çıkar);
-        iken x!=u64(0) { q:=ilk_bit(i64(x)); x&=x-u64(1); adres_yaz(d,n,adres_ekle(B0,tr_ofs_sıra[i64(bayt_oku(S0,q^ç0))]+tr_ofs_t0[i64(bayt_oku(eski,q))])); n+=1; }
+        iken x!=u64(0) { q:=ilk_bit(i64(x)); x&=x-u64(1); { öw:=adres_ekle(B0,tr_ofs_sıra[i64(bayt_oku(S0,q^ç0))]+tr_ofs_t0[i64(bayt_oku(eski,q))]); öngetir(öw); öngetir(adres_ekle(öw,64)); öngetir(adres_ekle(öw,128)); öngetir(adres_ekle(öw,192)); adres_yaz(d,n,öw); } n+=1; }
         a0.nc=n; n=a0.ne; x=gir; d=adres(a0.ek);
-        iken x!=u64(0) { q:=ilk_bit(i64(x)); x&=x-u64(1); adres_yaz(d,n,adres_ekle(B0,tr_ofs_sıra[i64(bayt_oku(S0,q^ç0))]+tr_ofs_t0[i64(bayt_oku(yeni,q))])); n+=1; }
+        iken x!=u64(0) { q:=ilk_bit(i64(x)); x&=x-u64(1); { öw:=adres_ekle(B0,tr_ofs_sıra[i64(bayt_oku(S0,q^ç0))]+tr_ofs_t0[i64(bayt_oku(yeni,q))]); öngetir(öw); öngetir(adres_ekle(öw,64)); öngetir(adres_ekle(öw,128)); öngetir(adres_ekle(öw,192)); adres_yaz(d,n,öw); } n+=1; }
         a0.ne=n;
     }
     eğer (bayrak&2)!=0 {
         ç1:=çevler>>8; s1:=((r^1)*6+k-1)*64+(s^ç1);
         B1:=adres_ekle(taban,i64(tr_taban[s1])*12*adım); S1:=adres_ekle(adres(tr_sıra),s1*64);
         n:=a1.nc; x:=çık; d:=adres(a1.çıkar);
-        iken x!=u64(0) { q:=ilk_bit(i64(x)); x&=x-u64(1); adres_yaz(d,n,adres_ekle(B1,tr_ofs_sıra[i64(bayt_oku(S1,q^ç1))]+tr_ofs_t1[i64(bayt_oku(eski,q))])); n+=1; }
+        iken x!=u64(0) { q:=ilk_bit(i64(x)); x&=x-u64(1); { öw:=adres_ekle(B1,tr_ofs_sıra[i64(bayt_oku(S1,q^ç1))]+tr_ofs_t1[i64(bayt_oku(eski,q))]); öngetir(öw); öngetir(adres_ekle(öw,64)); öngetir(adres_ekle(öw,128)); öngetir(adres_ekle(öw,192)); adres_yaz(d,n,öw); } n+=1; }
         a1.nc=n; n=a1.ne; x=gir; d=adres(a1.ek);
-        iken x!=u64(0) { q:=ilk_bit(i64(x)); x&=x-u64(1); adres_yaz(d,n,adres_ekle(B1,tr_ofs_sıra[i64(bayt_oku(S1,q^ç1))]+tr_ofs_t1[i64(bayt_oku(yeni,q))])); n+=1; }
+        iken x!=u64(0) { q:=ilk_bit(i64(x)); x&=x-u64(1); { öw:=adres_ekle(B1,tr_ofs_sıra[i64(bayt_oku(S1,q^ç1))]+tr_ofs_t1[i64(bayt_oku(yeni,q))]); öngetir(öw); öngetir(adres_ekle(öw,64)); öngetir(adres_ekle(öw,128)); öngetir(adres_ekle(öw,192)); adres_yaz(d,n,öw); } n+=1; }
         a1.ne=n;
     }
 }
@@ -1001,7 +1075,7 @@ işlev tr_liste_bakış(l:S8Satırlar,p:i64,çev:i64,tahta:adres,dolu:u64,A:adre
         B:=adres_ekle(taban,i64(tr_taban[s0])*12*adım); S:=adres_ekle(adres(tr_sıra),s0*64);
         iken h!=u64(0) {
             q:=ilk_bit(i64(h)); h&=h-u64(1);
-            adres_yaz(d,n,adres_ekle(B,tr_ofs_sıra[i64(bayt_oku(S,q^çev))]+tr_ofs_t[pt+i64(bayt_oku(tahta,q))])); n+=1;
+            { öw:=adres_ekle(B,tr_ofs_sıra[i64(bayt_oku(S,q^çev))]+tr_ofs_t[pt+i64(bayt_oku(tahta,q))]); öngetir(öw); öngetir(adres_ekle(öw,64)); öngetir(adres_ekle(öw,128)); öngetir(adres_ekle(öw,192)); adres_yaz(d,n,öw); } n+=1;
         }
     }
     l.ne=n;
@@ -1162,20 +1236,19 @@ işlev s8_saldırı_birleştir(att:adres,bb:u64):u64 {
     h:=u64(0); iken bb!=u64(0) { s:=ilk_bit(i64(bb)); bb&=bb-u64(1); h|=u64_oku(att,s); } dön h;
 }
 işlev s8_asılı_yalın(k:Konum,G:adres,att:adres) {
-    P:=yerel_dizi(u64,2); M:=yerel_dizi(u64,2); R:=yerel_dizi(u64,2); A:=yerel_dizi(u64,2);
     wp:=k.bit_tahtası[1]; bp:=k.bit_tahtası[7];
-    P[0]=((wp<<u64(7))&u64(0x7f7f7f7f7f7f7f7f))|((wp<<u64(9))&u64(0xfefefefefefefefe));
-    P[1]=((bp>>u64(9))&u64(0x7f7f7f7f7f7f7f7f))|((bp>>u64(7))&u64(0xfefefefefefefefe));
-    yinele(c:=0;c<2;c+=1) {
-        o:=6*c; M[c]=s8_saldırı_birleştir(att,k.bit_tahtası[o+2]|k.bit_tahtası[o+3]);
-        R[c]=s8_saldırı_birleştir(att,k.bit_tahtası[o+4]);
-        A[c]=P[c]|M[c]|R[c]|s8_saldırı_birleştir(att,k.bit_tahtası[o+5])|şah_alanı[k.şah[c]];
-    }
-    yinele(c:=0;c<2;c+=1) {
-        o:=6*c;e:=1-c; hafif:=k.bit_tahtası[o+2]|k.bit_tahtası[o+3];
-        u64_yaz(G,c,(hafif&P[e])|(k.bit_tahtası[o+4]&(P[e]|M[e]))|(k.bit_tahtası[o+5]&(P[e]|M[e]|R[e])));
-        u64_yaz(G,2+c,(k.renkler[c]&~k.bit_tahtası[o+6])&A[e]&~A[c]);
-    }
+    p0:=((wp<<u64(7))&u64(0x7f7f7f7f7f7f7f7f))|((wp<<u64(9))&u64(0xfefefefefefefefe));
+    p1:=((bp>>u64(9))&u64(0x7f7f7f7f7f7f7f7f))|((bp>>u64(7))&u64(0xfefefefefefefefe));
+    m0:=s8_saldırı_birleştir(att,k.bit_tahtası[2]|k.bit_tahtası[3]);
+    r0:=s8_saldırı_birleştir(att,k.bit_tahtası[4]);
+    a0:=p0|m0|r0|s8_saldırı_birleştir(att,k.bit_tahtası[5])|şah_alanı[k.şah[0]];
+    m1:=s8_saldırı_birleştir(att,k.bit_tahtası[8]|k.bit_tahtası[9]);
+    r1:=s8_saldırı_birleştir(att,k.bit_tahtası[10]);
+    a1:=p1|m1|r1|s8_saldırı_birleştir(att,k.bit_tahtası[11])|şah_alanı[k.şah[1]];
+    u64_yaz(G,0,((k.bit_tahtası[2]|k.bit_tahtası[3])&p1)|(k.bit_tahtası[4]&(p1|m1))|(k.bit_tahtası[5]&(p1|m1|r1)));
+    u64_yaz(G,1,((k.bit_tahtası[8]|k.bit_tahtası[9])&p0)|(k.bit_tahtası[10]&(p0|m0))|(k.bit_tahtası[11]&(p0|m0|r0)));
+    u64_yaz(G,2,(k.renkler[0]&~k.bit_tahtası[6])&a1&~a0);
+    u64_yaz(G,3,(k.renkler[1]&~k.bit_tahtası[12])&a0&~a1);
 }
 işlev s8_asılı_bul(k:Konum,G:adres,X:adres,Y:adres,att:adres) {
     eğer att!=0 && !s8_asılı2 && !s8_klasik && !s8_klasik2 && s8_S==0 { s8_asılı_yalın(k,G,att); dön 0; }
@@ -1438,7 +1511,68 @@ işlev s8_baş(x:adres,h2:adres,bk:i64) {
         kn_baş(h2,adres(h1),adres_ekle(ağ,s8_W2+bk*s8_L2*g2),adres_ekle(ağ,s8_B2+bk*s8_L2*4),g2,s8_L2);
     }
 }
+
+işlev s8_değeri_hızlı(k:Konum,d:adres,ölçek:i64):i64 {
+    x:=yerel_dizi(u8,1024); indis:=yerel_dizi(u16,264); tmp:=yerel_dizi(i16,256);
+    ek_ptr:=yerel_dizi(u64,128); G:=yerel_dizi(u64,4);
+    z:=yerel_dizi(i32,128); h1:=yerel_dizi(u8,256); h2:=yerel_dizi(u8,128);
+    var_asılı:=0;
+    eğer s8_asılı || s8_gerilim {
+        s8_asılı_yalın(k,adres(G),adres_ekle(d,s8_TRO));
+        var_asılı=(G[0]|G[1]|G[2]|G[3])!=u64(0);
+    }
+    h:=s8_ph; H:=s8_H; tab:=adres(s8_indis_tablo); rel_taban:=adres_ekle(ağ,s8_REL); rk2:=s8_RK*2;
+    adet:=0;
+    yinele(v:=0;v<2;v+=1) {
+        p:=k.sıra^v; a:=adres_ekle(d,p*s8_BK); xv:=adres_ekle(adres(x),v*H); g_taban:=(v*H)>>2;
+        eğer s8_asılı && var_asılı {
+            ne:=0; çev:=(p*56)^(i64(i32_oku(a,s8_PQ+8))&7);
+            yinele(j:=0;j<4;j+=1) {
+                bb:=G[j];
+                iken bb!=u64(0) {
+                    s:=ilk_bit(i64(bb)); bb&=bb-u64(1); t:=i64(k.tahta[s]);
+                    f:=s8_HB+(((renk(t)^p)*6+tür(t)-1)*64+(s^çev))*2+(j>>1);
+                    adres_yaz(adres(ek_ptr),ne,adres_ekle(rel_taban,f*rk2)); ne+=1;
+                }
+            }
+            satır_topla_çıkar_i16(adres(tmp),a,h*2,adres(ek_ptr),ne,adres(ek_ptr),0);
+            eğer T_ÖNPAKET_AVX2 { çarp_kırp_i16_u8(xv,adres(tmp),adres_ekle(adres(tmp),h*2),h); }
+            yoksa { adet+=çarp_kırp_indis4_i16_u8(xv,adres(tmp),adres_ekle(adres(tmp),h*2),h,adres_ekle(adres(indis),adet*2),tab,g_taban); }
+        } yoksa {
+            eğer T_ÖNPAKET_AVX2 { çarp_kırp_i16_u8(xv,a,adres_ekle(a,h*2),h); }
+            yoksa { adet+=çarp_kırp_indis4_i16_u8(xv,a,adres_ekle(a,h*2),h,adres_ekle(adres(indis),adet*2),tab,g_taban); }
+        }
+        eğer T_ÖNPAKET_AVX2 { çarp_kırp_i16_u8(adres_ekle(xv,h),adres_ekle(a,h*4),adres_ekle(a,(H+h)*2),H-h); }
+        yoksa { adet+=çarp_kırp_indis4_i16_u8(adres_ekle(xv,h),adres_ekle(a,h*4),adres_ekle(a,(H+h)*2),H-h,adres_ekle(adres(indis),adet*2),tab,g_taban+(h>>2)); }
+    }
+    eğer T_ÖNPAKET_AVX2 { adet=indis4_u8(adres(x),s8_AX,adres(indis),tab); }
+    bk:=s8_kova(k);
+    eğer s8_gerilim { bk=enaz(3,(bit_say(i64(dolu(k)))-1)/8)*2+seç((G[1-k.sıra]|G[3-k.sıra])!=u64(0),1,0); }
+    eğer T_ÖNPAKET_AVX2 && s8_çift_etkin {
+        seyrek_karma_indis_u8_i8_i32(adres(z),adres(x),adres_ekle(adres(s8_karma_ptr),bk*s8_AX*2),adres_ekle(ağ,s8_B1+bk*128),s8_AX,32,adres(indis),adet);
+        kırp_çift_i32_u8(adres(h1),adres(z),32,6);
+        yoğun_çift_u8_i16_i32(adres(z),adres(h1),adres_ekle(adres(s8_w2ç),bk*2048),adres_ekle(ağ,s8_B2+bk*64),64,16);
+        kırp_çift_i32_u8(adres(h2),adres(z),16,6);
+    } yoksa {
+        g2:=2*s8_L1;
+        seyrek_blok_indis_u8_i8_i32(adres(z),adres(x),adres_ekle(adres(s8_w1g),bk*s8_L1*s8_AX),adres_ekle(ağ,s8_B1+bk*s8_L1*4),s8_AX,s8_L1,adres(indis),adet);
+        kırp_çift_i32_u8(adres(h1),adres(z),s8_L1,6);
+        eğer kn_blok_etkin {
+            yoğun_blok_u8_i8_i32(adres(z),adres(h1),adres_ekle(adres(s8_w2p),bk*s8_L2*g2),adres_ekle(adres(s8_b2p),bk*s8_L2*4),g2,s8_L2);
+            kırp_çift_i32_u8(adres(h2),adres(z),s8_L2,6);
+        } yoksa {
+            kn_baş(adres(h2),adres(h1),adres_ekle(ağ,s8_W2+bk*s8_L2*g2),adres_ekle(ağ,s8_B2+bk*s8_L2*4),g2,s8_L2);
+        }
+    }
+    a0:=adres_ekle(d,k.sıra*s8_BK); b0:=adres_ekle(d,(1-k.sıra)*s8_BK);
+    zv:=i64(nokta_u8_i8_i32(adres(h2),adres_ekle(ağ,s8_WO+bk*2*s8_L2),2*s8_L2))+i64(i32_oku(adres_ekle(ağ,s8_BO),bk))+
+        32*(i64(i32_oku(a0,s8_PQ+bk))-i64(i32_oku(b0,s8_PQ+bk)));
+    eğer s8_hata { i32_yaz(d,s8_PQ+12,i32(i64(nokta_u8_i8_i32(adres(h2),adres_ekle(ağ,s8_WE+bk*2*s8_L2),2*s8_L2))+i64(i32_oku(adres_ekle(ağ,s8_BE),bk)))); }
+    cp:=zv*ölçek/(255*64);
+    dön enaz(24000,ençok(-24000,cp));
+}
 işlev s8_değeri_ölçekli(k:Konum,d:adres,ölçek:i64):i64 {
+    eğer s8_hızlı_etkin && (tr_da!=0 || s8_direkt==0) { dön s8_değeri_hızlı(k,d,ölçek); }
     x:=yerel_dizi(u8,2080); h2:=yerel_dizi(u8,128);
     G:=yerel_dizi(u64,8); X:=yerel_dizi(u64,64); Y:=yerel_dizi(u64,24);
     s8_girdi(k,d,adres(x),adres(G),adres(X),adres(Y));
@@ -1662,7 +1796,7 @@ işlev s8_kur(h:adres,p:adres,deneme:i64,sessiz:i64):i64 {
 
     yinele(i:=0;i<s8_PSQ*8;i+=1) { i32_yaz(psqt_eksi,i,i32(-i64(i16_oku(adres_ekle(p,s8_PSQT),i)))); }
     ağı_bırak();
-    ağ=p; ağ_türü=2; deneme_ağı=deneme;
+    ağ=p; ağ_türü=2; deneme_ağı=deneme; değer_nesli+=1;
     eğer s8_psqt_eksi!=0 { hizalı_bırak(s8_psqt_eksi); }
     s8_psqt_eksi=psqt_eksi;
 
@@ -1692,6 +1826,9 @@ işlev s8_kur(h:adres,p:adres,deneme:i64,sessiz:i64):i64 {
     s8_çift_etkin=T_ÖNPAKET_AVX2 && s8_L1==32 && s8_L2==16 && (işlemci_özellikleri()&u64(4))!=u64(0);
 
     eğer T_AVX_VNNI && (işlemci_özellikleri()&u64(4096))!=u64(0) { s8_çift_etkin=0; }
+    s8_hızlı_etkin=s8_A<=1024 && s8_S==0 && s8_ph>0 && s8_ph<=128 && (s8_ph&3)==0 && (s8_H&3)==0 &&
+                   (s8_direkt!=0 || (!s8_asılı && !s8_gerilim)) && !s8_asılı2 && !s8_klasik && !s8_klasik2 && !s8_çapa &&
+                   s8_rel_bayt==2 && s8_rel_hızlı!=0 && (s8_grup_etkin!=0 || (T_ÖNPAKET_AVX2!=0 && s8_çift_etkin!=0));
     eğer T_ÖNPAKET_AVX2 && s8_çift_etkin {
         yinele(bk:=0;bk<8;bk+=1) {
             eğer s8_L2==16 { s8_çift_paketle(adres_ekle(adres(s8_w2ç),bk*s8_L2*2*s8_L1*2),adres_ekle(ağ,s8_W2+bk*s8_L2*2*s8_L1),2*s8_L1,s8_L2); }
@@ -1712,6 +1849,7 @@ işlev s8_kur(h:adres,p:adres,deneme:i64,sessiz:i64):i64 {
 
     bellek_sıfırla(adres(oyun.öz),DURUM_BOYU);
     s8_tazele(oyun);
+    yenilemeleri_temizle();
     eğer !sessiz { metin_satırı("info string TNN-S8 agi yuklendi"); }
     dön 1;
 }
@@ -1758,40 +1896,79 @@ işlev önbelleği_kur():i64 {
 işlev önbellekten_oku(k:Konum,q:Önbellek):i64 {
     q.sınır=0;
     c:=gör(ÖnbellekKümesi,adres_ekle(ortak_bellek,i64(çarp_yüksek_u64(k.anahtar,u64(bellek_kümesi)))*boyut(ÖnbellekKümesi)));
-    kilitli:=işçi_sayısı>1;
-    eğer kilitli && atomik_kıyas_değiştir(&c.kilit,0,1)!=0 { dön 0; }
     kısa:=u32(k.anahtar&u64(0xffffffff));
+    yeninesil:=bellek_nesli&255;
+    eğer işçi_sayısı==1 {
+        yinele(i:=0;i<3;i+=1) {
+            r:=gör(ÖnbellekKaydı,adres_ekle(adres(c.kayıt),i*16)); bilgi:=i64(r.bilgi);
+            eğer (bilgi&3)!=0 && r.anahtar==kısa {
+                q.anahtar=k.anahtar; q.pv=(bilgi>>2)&1; q.boş=0; q.derinlik=i32(i64(r.derinlik)); q.puan=i32(i64(r.puan));
+                q.hamle=i64(r.hamle); q.sınır=bilgi&3; q.değer=i32(i64(r.değer)); q.değeri_var=i32((bilgi>>3)&1); q.nesil=i64(r.nesil);
+                eğer i64(r.nesil)!=yeninesil { r.nesil=u8(yeninesil); }
+                dön 1;
+            }
+        }
+        dön 0;
+    }
+
+    s1:=atomik_oku(&c.kilit);
+    eğer (s1&1)!=0 { dön 0; }
     yinele(i:=0;i<3;i+=1) {
-        r:=gör(ÖnbellekKaydı,adres_ekle(adres(c.kayıt),i*16)); bilgi:=i64(r.bilgi);
-        eğer (bilgi&3)!=0 && r.anahtar==kısa {
-            q.anahtar=k.anahtar; q.pv=(bilgi>>2)&1; q.boş=0; q.derinlik=i32(i64(r.derinlik)); q.puan=i32(i64(r.puan));
-            q.hamle=i64(r.hamle); q.sınır=bilgi&3; q.değer=i32(i64(r.değer)); q.değeri_var=i32((bilgi>>3)&1); q.nesil=i64(r.nesil);
-            r.nesil=u8(bellek_nesli&255); kır;
+        p:=adres_ekle(adres(c.kayıt),i*16);
+        w0:=u64(atomik_oku(p)); w1:=u64(atomik_oku(adres_ekle(p,8)));
+        bilgi:=i64((w1>>u64(24))&u64(0xff));
+        eğer (bilgi&3)!=0 && u32(w0&u64(0xffffffff))==kısa {
+            eğer atomik_oku(&c.kilit)!=s1 { dön 0; }
+            q.anahtar=k.anahtar; q.pv=(bilgi>>2)&1; q.boş=0;
+            q.derinlik=i32(i64((w1>>u64(16))&u64(0xff)));
+            q.puan=i32(i64(i16((w0>>u64(48))&u64(0xffff))));
+            q.hamle=i64((w0>>u64(32))&u64(0xffff));
+            q.sınır=bilgi&3;
+            q.değer=i32(i64(i16(w1&u64(0xffff))));
+            q.değeri_var=i32((bilgi>>3)&1);
+            eskinesil:=i64((w1>>u64(32))&u64(0xff)); q.nesil=eskinesil;
+            eğer eskinesil!=yeninesil && atomik_kıyas_değiştir(&c.kilit,s1,s1+1)==s1 {
+                w1y:=(w1&~u64(0xff00000000))|(u64(yeninesil)<<u64(32));
+                atomik_yaz(adres_ekle(p,8),i64(w1y));
+                atomik_yaz(&c.kilit,s1+2);
+            }
+            dön 1;
         }
     }
-    eğer kilitli { atomik_yaz(&c.kilit,0); } dön q.sınır!=0;
+    dön 0;
 }
 yapı Kök { hamle:i64; puan:i64; bitti:i64; kesin:i64; yol:i64[128]; uzunluk:i64; }
 
-yapı DeğerYuva { anahtar:u64; puan:i32; sıra:i32; tahta:u8[64]; }
-sabit DEĞER_YUVA=4096;
-yapı Arayıcı {
-    konum:Konum; kök:Kök[]; biten:Kök[]; sıra:i64[512]; kimlik:i64; derinlik:i64; alt:i64; üst:i64; biten_derinlik:i64; biten_seçilen:i64;
-    biriken_düğüm:i64; seçilen_derinlik:i64; boş_yasak:i64; budadı:i64[8]; özdeğer:i32[128]; özgeçerli:u8[128]; önceki:i64[128]; karşılık:i32[8192];
-    geçmiş:i32[8192]; katiller:i64[256]; yol:i64[16384]; uzunluk:i64[128];
+yapı DeğerYuva { tahta:u64[4]; puan:i32; damga:i32; dolgu:u8[24]; }
+sabit DEĞER_YUVA=262144;
+genel kalıcı_değer:adres=0; genel değer_nesli:i64=1;
+işlev kalıcı_değer_al(i:i64):adres {
+    eğer kalıcı_değer==0 { kalıcı_değer=bellek_ayır(AZAMİ_İŞÇİ*8); eğer kalıcı_değer==0 { dön 0; } bellek_sıfırla(kalıcı_değer,AZAMİ_İŞÇİ*8); }
+    p:=adres_oku(kalıcı_değer,i);
+    eğer p==0 { p=büyük_ayır(DEĞER_YUVA*boyut(DeğerYuva)); eğer p!=0 { bellek_sıfırla(p,DEĞER_YUVA*boyut(DeğerYuva)); adres_yaz(kalıcı_değer,i,p); } }
+    dön p;
+}
 
-    değer_belleği:adres; durumlar:adres; yenileme:adres; durum_geçerli:u8[AZAMİ_KAT]; izler:İz[];
+yapı Arayıcı {
+    konum:Konum; değer_belleği:adres; durumlar:adres; yenileme:adres; izler:İz[]; listeler:adres; sürek:adres; kök:Kök[]; biten:Kök[];
+    kimlik:i64; sıfır_başı:i64;
+    biriken_düğüm:i64; rapor_adım:i64; sayaç:i64; seçilen_derinlik:i64; boş_yasak:i64; kök_iz:i64; boş_alt_kat:i64; mat_arıyor:i64;
+    derinlik:i64; alt:i64; üst:i64; biten_derinlik:i64; biten_seçilen:i64;
+    özgeçerli:u8[128]; durum_geçerli:u8[AZAMİ_KAT];
+    özdeğer:i32[128]; önceki:i64[128]; katiller:i64[256]; uzunluk:i64[128];
 
     durum_adres:u64[AZAMİ_KAT];
 
-    kök_iz:i64; boş_alt_kat:i64; mat_arıyor:i64; hariç:i64[136]; taş_izi:i64[136]; önceki_av:i64[136]; kesme:i64[136];
-    alış_geçmişi:i32[5824]; sürek:adres; düzeltme:i32[32768]; düzeltme_tp:i32[32768]; düzeltme_dv:i32[1536]; sayaç:i64; kök_düğüm:i64[512];
+    hariç:i64[136]; taş_izi:i64[136]; önceki_av:i64[136]; kesme:i64[136]; şah_önbellek:u64[136]; budadı:i64[8];
+    kök_düğüm:i64[512]; sıra:i64[512]; sıfır_sonu:i64;
+
+    karşılık:i32[8192]; geçmiş:i32[8192]; alış_geçmişi:i32[5824]; düzeltme:i32[32768]; düzeltme_tp:i32[32768]; düzeltme_dv:i32[1536];
+    yol:i64[16384];
 }
 
 yapı Sürek { v1:i16[692224]; v2:i16[692224]; }
-
 sabit AZAMİ_İŞÇİ=512;
-genel kalıcı_geçmiş:i32[AZAMİ_İŞÇİ*8192]; genel kalıcı_karşılık:i32[AZAMİ_İŞÇİ*8192]; genel kalıcı_alış:i32[AZAMİ_İŞÇİ*5824]; genel kalıcı_sürek:adres=0; genel kalıcı_düzeltme:i32[AZAMİ_İŞÇİ*32768]; genel kalıcı_düzeltme_tp:i32[AZAMİ_İŞÇİ*32768]; genel kalıcı_düzeltme_dv:i32[AZAMİ_İŞÇİ*1536];
+genel kalıcı_sürek:adres=0; genel kalıcı_liste:adres=0;
 
 işlev düzeltme_indisi(k:Konum):i64 {
     h:u64:=k.bit_tahtası[1]*u64(0x9E3779B97F4A7C15)+k.bit_tahtası[7]*u64(0xC2B2AE3D27D4EB4F);
@@ -1862,11 +2039,35 @@ işlev kalıcı_sürek_al(i:i64):adres {
     eğer p==0 { p=büyük_ayır(boyut(Sürek)); eğer p!=0 { bellek_sıfırla(p,boyut(Sürek)); adres_yaz(kalıcı_sürek,i,p); } }
     dön p;
 }
+işlev kalıcı_liste_al(i:i64):adres {
+    eğer kalıcı_liste==0 { kalıcı_liste=bellek_ayır(AZAMİ_İŞÇİ*8); eğer kalıcı_liste==0 { dön 0; } bellek_sıfırla(kalıcı_liste,AZAMİ_İŞÇİ*8); }
+    p:=adres_oku(kalıcı_liste,i);
+    eğer p==0 { p=büyük_ayır((AZAMİ_KAT+4)*boyut(Hamleler)); eğer p!=0 { bellek_sıfırla(p,(AZAMİ_KAT+4)*boyut(Hamleler)); adres_yaz(kalıcı_liste,i,p); } }
+    dön p;
+}
+işlev kat_listesi(a:Arayıcı,kat:i64):Hamleler {
+    p:=a.listeler;
+    eğer p==0 { p=kalıcı_liste_al(a.kimlik); a.listeler=p; }
+    dön gör(Hamleler,adres_ekle(p,kat*boyut(Hamleler)));
+}
+işlev yenilemeleri_temizle() {
+    eğer adres(arayıcılar)==0 { dön 0; }
+    yinele(i:=0;i<arayıcı_kapasite;i+=1) {
+        p:=arayıcılar[i].yenileme;
+        eğer p!=0 { bellek_sıfırla(p,128*boyut(S8Yenileme)); }
+    }
+}
 işlev geçmişleri_temizle() {
-
-    n:=ençok(işçi_sayısı,en_çok_işçi);
-    bellek_sıfırla(adres(kalıcı_geçmiş),n*8192*4); bellek_sıfırla(adres(kalıcı_karşılık),n*8192*4); bellek_sıfırla(adres(kalıcı_alış),n*5824*4); bellek_sıfırla(adres(kalıcı_düzeltme),n*32768*4); bellek_sıfırla(adres(kalıcı_düzeltme_tp),n*32768*4); bellek_sıfırla(adres(kalıcı_düzeltme_dv),n*1536*4);
+    eğer adres(arayıcılar)!=0 {
+        yinele(i:=0;i<arayıcı_kapasite;i+=1) {
+            a:=arayıcılar[i];
+            bellek_sıfırla(adres(a.karşılık),8192*4); bellek_sıfırla(adres(a.geçmiş),8192*4);
+            bellek_sıfırla(adres(a.alış_geçmişi),5824*4); bellek_sıfırla(adres(a.düzeltme),32768*4);
+            bellek_sıfırla(adres(a.düzeltme_tp),32768*4); bellek_sıfırla(adres(a.düzeltme_dv),1536*4);
+        }
+    }
     eğer kalıcı_sürek!=0 { yinele(i:=0;i<AZAMİ_İŞÇİ;i+=1) { p:=adres_oku(kalıcı_sürek,i); eğer p!=0 { bellek_sıfırla(p,boyut(Sürek)); } } }
+    yenilemeleri_temizle();
 }
 genel kök_konum:Konum;
 genel kökler:Kök[512];
@@ -1874,6 +2075,12 @@ genel kökler:Kök[512];
 genel arayıcılar:Arayıcı[]; genel arayıcı_kapasite:i64=0; genel en_çok_işçi:i64=1;
 genel iş_kayıtları:u64[AZAMİ_İŞÇİ];
 genel arama_kaydı:u64[1];
+
+genel koord_mutex:u64[16]; genel koord_başla_koşul:u64[16]; genel koord_bitti_koşul:u64[16];
+genel koord_hazır:i64=0; genel koord_tur:i64=0; genel koord_biten:i64=0; genel koord_kapat:i64=0;
+genel havuz_mutex:u64[16]; genel havuz_başla_koşul:u64[16]; genel havuz_bitti_koşul:u64[16];
+genel havuz_hazır:i64=0; genel havuz_sayısı:i64=0; genel havuz_hedef:i64=0; genel havuz_tur:i64=0; genel havuz_kalan:i64=0; genel havuz_kapat:i64=0;
+genel sonraki_rapor_ns:i64=0;
 genel dur:i64=0; genel kullanıcı_durdu:i64=0;
 
 genel dur_yalıtımı:u8[128];
@@ -1932,8 +2139,12 @@ işlev düğüm_al(a:Arayıcı):i64 {
         a.biriken_düğüm+=1;
         eğer a.biriken_düğüm<64 { dön 1; }
         düğümleri_aktar(a);
+        a.rapor_adım+=1;
         bitiş:=atomik_oku(&son_zaman);
-        eğer bitiş>0 { şimdi:=zaman_ns(); eğer şimdi<0 || şimdi>=bitiş { atomik_yaz(&dur,1); dön 0; } }
+        eğer bitiş>0 {
+            şimdi:=zaman_ns(); eğer şimdi<0 || şimdi>=bitiş { atomik_yaz(&dur,1); dön 0; }
+            eğer a.kimlik==0 && (a.rapor_adım&15)==0 { periyodik_raporla(şimdi); }
+        } yoksa eğer a.kimlik==0 && (a.rapor_adım&15)==0 { periyodik_raporla(zaman_ns()); }
         dön 1;
     }
 
@@ -1943,8 +2154,12 @@ işlev düğüm_al(a:Arayıcı):i64 {
         eğer eski>=düğüm_sınırı { atomik_yaz(&dur,1); dön 0; }
         düğümler=eski+1;
         eğer (eski&63)==0 {
+            a.rapor_adım+=1;
             bitiş:=atomik_oku(&son_zaman);
-            eğer bitiş>0 { şimdi:=zaman_ns(); eğer şimdi<0 || şimdi>=bitiş { atomik_yaz(&dur,1); dön 0; } }
+            eğer bitiş>0 {
+                şimdi:=zaman_ns(); eğer şimdi<0 || şimdi>=bitiş { atomik_yaz(&dur,1); dön 0; }
+                eğer a.kimlik==0 && (a.rapor_adım&15)==0 { periyodik_raporla(şimdi); }
+            } yoksa eğer a.kimlik==0 && (a.rapor_adım&15)==0 { periyodik_raporla(zaman_ns()); }
         }
         dön 1;
     }
@@ -1954,8 +2169,12 @@ işlev düğüm_al(a:Arayıcı):i64 {
         atomik_ekle(&düğümler,-1); atomik_yaz(&dur,1); dön 0;
     }
     eğer (eski&63)==0 {
+        a.rapor_adım+=1;
         bitiş:=atomik_oku(&son_zaman);
-        eğer bitiş>0 { şimdi:=zaman_ns(); eğer şimdi<0 || şimdi>=bitiş { atomik_yaz(&dur,1); dön 0; } }
+        eğer bitiş>0 {
+            şimdi:=zaman_ns(); eğer şimdi<0 || şimdi>=bitiş { atomik_yaz(&dur,1); dön 0; }
+            eğer a.kimlik==0 && (a.rapor_adım&15)==0 { periyodik_raporla(şimdi); }
+        } yoksa eğer a.kimlik==0 && (a.rapor_adım&15)==0 { periyodik_raporla(zaman_ns()); }
     }
     dön 1;
 }
@@ -2080,8 +2299,29 @@ genel budama:i64=1;
 genel dinamik_marj:i64=0; genel dm_lmr:i64=0; genel dm_cp:i64=0; genel dm_orta:i64=0; genel dm_eğim:i64=0; genel dm_alt:i64=40; genel dm_üst:i64=112;
 işlev buda(b:i64):i64 { dön budama && (BUDAMA_TÜM&b)!=0; }
 
-genel ay:i64[96]={73,54,12,300,250,3,3,200,200,50,64,131,300,500,1024,2079,1024,512,128,3,8,1904,87,105,25,150,100,200,200,12,134,1500,60,50,180,1024,1024,1024,512,14,5,6,0,0,276,0,50,2,0,0,16,75,40,300,25,65,80,40,150,125,180,120,100,0,200,100,512,256,3,2,4,0,0,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+genel ay:i64[96]={73,54,12,300,250,3,3,200,200,50,64,131,300,500,1024,2079,1024,512,128,3,8,1904,87,105,25,150,100,200,200,12,134,1500,60,50,180,1024,1024,1024,512,14,5,6,0,0,276,0,50,2,60,0,16,75,40,300,25,65,80,40,150,125,180,120,100,0,200,100,512,256,3,2,4,0,0,0,20,0,0,0,0,0,0,700000,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 tablo ln_tablosu:i64[64]={0,0,177,281,355,412,459,498,532,562,589,614,636,657,676,693,710,725,740,754,767,779,791,803,814,824,834,844,853,862,871,879,887,895,903,910,917,924,931,938,944,951,957,963,969,975,980,986,991,996,1001,1007,1012,1016,1021,1026,1030,1035,1039,1044,1048,1052,1057,1061};
+
+genel lmr_tablo:i32[8192];
+genel lmr_all_ters:u64[256];
+genel nmp_d_tablo:i32[256];
+genel lmp_tablo:i32[512];
+işlev ayar_tablolarını_kur() {
+    b0:=ay[12]; b1:=ay[11];
+    yinele(d:=0;d<64;d+=1) {
+        yinele(m:=0;m<64;m+=1) {
+            çarpım:=ln_tablosu[d]*ln_tablosu[m];
+            lmr_tablo[d*64+m]=i32(seç(b0!=0,çarpım/b0,0));
+            lmr_tablo[4096+d*64+m]=i32(seç(b1!=0,çarpım/b1,0));
+        }
+    }
+    yinele(d:=0;d<256;d+=1) {
+        lmr_all_ters[d]=u64(-1)/u64(256*d+268)+u64(1);
+        nmp_d_tablo[d]=i32(seç(ay[6]!=0,d/ay[6],0));
+        lmp_tablo[d]=i32(seç(ay[64]!=0,(ay[20]+d*d)*100/ay[64],SONSUZ));
+        lmp_tablo[256+d]=i32((ay[20]+d*d)*100/100);
+    }
+}
 işlev geçmiş_yaz(a:Arayıcı,r:i64,h:i64,ödül:i64) {
     j:=r*4096+kaynak(h)*64+hedef(h); v:=i64(a.geçmiş[j]);
     a.geçmiş[j]=i32(v+ödül-v*mutlak(ödül)/16384);
@@ -2120,7 +2360,6 @@ işlev şah_verir(k:Konum,h:i64):i64 {
     dön (fil_saldırısı(şah,d)&(k.bit_tahtası[dost+3]|k.bit_tahtası[dost+5]))!=u64(0);
 }
 
-yapı ŞahSorgusu { hedef:u64[7]; açan:u64; şah:i64; hazır:i64; özel:i64; }
 işlev şah_sorgusu_kur(k:Konum,q:ŞahSorgusu) {
     r:=k.sıra; o:=6*r; şah:=k.şah[1-r]; d:=dolu(k);
     q.şah=şah; q.açan=u64(0); q.özel=0;
@@ -2155,8 +2394,21 @@ işlev tehditleri_kur(k:Konum,t:Tehditler) {
     iken x!=u64(0) { s:=ilk_bit(i64(x)); x&=x-u64(1); kl|=kale_saldırısı(s,d); }
     t.piyon=pa; t.hafif=hf; t.kale=kl; t.hazır=1;
 }
+işlev sırala_alış(a:Arayıcı,l:Hamleler,öneri:i64,ilk:i64) {
+    k:=a.konum;
+    yinele(i:=ilk;i<l.adet;i+=1) {
+        h:=i64(l.hamle[i]); av:=alınan_taş(k,h); ht:=hamle_türü(h); taş:=i64(k.tahta[kaynak(h)]); değer:=0; alış:=0;
+
+        eğer av!=0 && ht<4 && değişim_bedeli[av]<değişim_bedeli[tür(taş)] { alış=1; }
+        l.alış[i]=i8(alış);
+        eğer h==öneri { değer=100000000; }
+        yoksa eğer ht>=4 { değer=2000000+değişim_bedeli[ht-2]*100+değişim_bedeli[av]; }
+        yoksa { değer=1000000+değişim_bedeli[av]*32+i64(a.alış_geçmişi[alış_yeri(taş,hedef(h),av)])/16; }
+        l.değer[i]=i32(değer);
+    }
+}
 işlev sırala(a:Arayıcı,l:Hamleler,öneri:i64,kat:i64,ilk:i64) {
-    şs:=yerel(ŞahSorgusu); şs.hazır=0;
+    şs:=liste_şs(l); eğer ilk==0 { şs.hazır=0; }
     k:=a.konum; th:=yerel(Tehditler); th.hazır=0; sy1:=sürek_yeri(a,kat,1); sy2:=sürek_yeri(a,kat,2); sü:=gör(Sürek,a.sürek);
 
     sıra:=k.sıra; katil1:=a.katiller[kat*2]; katil2:=a.katiller[kat*2+1]; gb:=sıra*4096;
@@ -2168,12 +2420,13 @@ işlev sırala(a:Arayıcı,l:Hamleler,öneri:i64,kat:i64,ilk:i64) {
     o:=1-sıra; h5:=k.bit_tahtası[o*6+5]; h45:=h5|k.bit_tahtası[o*6+4]; h2345:=h45|k.bit_tahtası[o*6+2]|k.bit_tahtası[o*6+3];
     d:=dolu(k);
     yinele(i:=ilk;i<l.adet;i+=1) {
-        h:=i64(l.hamle[i]); av:=alınan_taş(k,h); ht:=hamle_türü(h); taş:=i64(k.tahta[kaynak(h)]); değer:=0; l.alış[i]=i32(0);
+        h:=i64(l.hamle[i]); av:=alınan_taş(k,h); ht:=hamle_türü(h); taş:=i64(k.tahta[kaynak(h)]); değer:=0; alış:=0;
 
-        eğer av!=0 && ht<4 && değişim_bedeli[av]<değişim_bedeli[tür(taş)] { l.alış[i]=i32(seç(değişim_eşik(k,h,0)!=0,0,-1)); }
+        eğer av!=0 && ht<4 && değişim_bedeli[av]<değişim_bedeli[tür(taş)] { alış=1; }
+        l.alış[i]=i8(alış);
         eğer h==öneri { değer=100000000; }
         yoksa eğer ht>=4 { değer=2000000+değişim_bedeli[ht-2]*100+değişim_bedeli[av]; }
-        yoksa eğer av!=0 { değer=seç(l.alış[i]<i32(0),-1000000,1000000)+değişim_bedeli[av]*32+i64(a.alış_geçmişi[alış_yeri(taş,hedef(h),av)])/16; }
+        yoksa eğer av!=0 { değer=1000000+değişim_bedeli[av]*32+i64(a.alış_geçmişi[alış_yeri(taş,hedef(h),av)])/16; }
         yoksa eğer h==katil1 { değer=900000; }
         yoksa eğer h==katil2 { değer=800000; }
         yoksa {
@@ -2195,9 +2448,9 @@ işlev sırala(a:Arayıcı,l:Hamleler,öneri:i64,kat:i64,ilk:i64) {
                 eğer (küme&bit(kh))!=u64(0) { değer+=pay; }
                 eğer (küme&bit(hh))!=u64(0) { değer-=pay; }
             }
-            eğer h==karşı { değer+=700000; }
+            eğer h==karşı { değer+=ay[81]; }
         }
-        l.değer[i]=değer;
+        l.değer[i]=i32(değer);
     }
 }
 işlev sıradakini_seç(l:Hamleler,i:i64):i64 {
@@ -2205,7 +2458,28 @@ işlev sıradakini_seç(l:Hamleler,i:i64):i64 {
     eniyi:=i; endeğer:=i64(l.değer[i]);
     yinele(j:=i+1;j<l.adet;j+=1) { v:=i64(l.değer[j]); eğer v>endeğer { endeğer=v; eniyi=j; } }
     h:=i64(l.hamle[i]); l.hamle[i]=i64(l.hamle[eniyi]); l.hamle[eniyi]=h;
-    d:=i64(l.değer[i]); l.değer[i]=i64(l.değer[eniyi]); l.değer[eniyi]=d; alış:=l.alış[i]; l.alış[i]=l.alış[eniyi]; l.alış[eniyi]=alış; dön i64(l.hamle[i]);
+    d:=i32(l.değer[i]); l.değer[i]=i32(l.değer[eniyi]); l.değer[eniyi]=d;
+    alış:=i8(l.alış[i]); l.alış[i]=i8(l.alış[eniyi]); l.alış[eniyi]=alış; dön i64(l.hamle[i]);
+}
+işlev sıradakini_seç_tembel(k:Konum,l:Hamleler,i:i64,yalnız_iyi:i64):i64 {
+    iken 1 {
+        eniyi:=i; endeğer:=i64(l.değer[i]);
+        yinele(j:=i+1;j<l.adet;j+=1) { v:=i64(l.değer[j]); eğer v>endeğer { endeğer=v; eniyi=j; } }
+        eğer yalnız_iyi && endeğer<0 { dön 0; }
+        eğer i64(l.alış[eniyi])>0 {
+            geçti:=değişim_eşik(k,i64(l.hamle[eniyi]),0);
+            l.alış[eniyi]=i8(seç(geçti!=0,0,-1));
+            eğer !geçti && endeğer<90000000 {
+                l.değer[eniyi]=i32(endeğer-2000000);
+                sürdür;
+            }
+        }
+        h:=i64(l.hamle[i]); l.hamle[i]=i64(l.hamle[eniyi]); l.hamle[eniyi]=h;
+        d:=i32(l.değer[i]); l.değer[i]=i32(l.değer[eniyi]); l.değer[eniyi]=d;
+        alış:=i8(l.alış[i]); l.alış[i]=i8(l.alış[eniyi]); l.alış[eniyi]=alış;
+        dön i64(l.hamle[i]);
+    }
+    dön 0;
 }
 işlev varyantı_yaz(a:Arayıcı,kat:i64,h:i64) {
     a.yol[kat*128]=h; n:=enaz(a.uzunluk[kat+1],126-kat);
@@ -2214,8 +2488,11 @@ işlev varyantı_yaz(a:Arayıcı,kat:i64,h:i64) {
 }
 işlev önbelleğe_yaz(a:Arayıcı,k:Konum,d:i64,sınır:i64,puan:i64,h:i64,değer:i64,kat:i64,pv:i64) {
     c:=gör(ÖnbellekKümesi,adres_ekle(ortak_bellek,i64(çarp_yüksek_u64(k.anahtar,u64(bellek_kümesi)))*boyut(ÖnbellekKümesi)));
-    kilitli:=işçi_sayısı>1;
-    eğer kilitli && atomik_kıyas_değiştir(&c.kilit,0,1)!=0 { dön 0; }
+    kilitli:=işçi_sayısı>1; s:=0;
+    eğer kilitli {
+        s=atomik_oku(&c.kilit);
+        eğer (s&1)!=0 || atomik_kıyas_değiştir(&c.kilit,s,s+1)!=s { dön 0; }
+    }
     kısa:=u32(k.anahtar&u64(0xffffffff)); seçilen:=0; enaz_değer:=SONSUZ;
     yinele(i:=0;i<3;i+=1) {
         r:=gör(ÖnbellekKaydı,adres_ekle(adres(c.kayıt),i*16));
@@ -2223,18 +2500,35 @@ işlev önbelleğe_yaz(a:Arayıcı,k:Konum,d:i64,sınır:i64,puan:i64,h:i64,değ
         önem:=i64(r.derinlik)-((bellek_nesli-i64(r.nesil))&255)*8;
         eğer önem<enaz_değer { enaz_değer=önem; seçilen=i; }
     }
-    q:=gör(ÖnbellekKaydı,adres_ekle(adres(c.kayıt),seçilen*16)); aynı:=(i64(q.bilgi)&3)!=0 && q.anahtar==kısa;
+    p:=adres_ekle(adres(c.kayıt),seçilen*16);
+    q:=gör(ÖnbellekKaydı,p); aynı:=(i64(q.bilgi)&3)!=0 && q.anahtar==kısa;
+    yeninesil:=bellek_nesli&255;
 
     eğer aynı && sınır!=1 && d+3<i64(q.derinlik) {
-        eğer h!=0 { q.hamle=u16(h); } q.nesil=u8(bellek_nesli&255); eğer kilitli { atomik_yaz(&c.kilit,0); } dön 0;
+        eğer !kilitli {
+            eğer h!=0 { q.hamle=u16(h); } q.nesil=u8(yeninesil); dön 0;
+        }
+        w0e:=u64_oku(p,0); w1e:=u64_oku(p,1);
+        eğer h!=0 { w0e=(w0e&~u64(0xffff00000000))|((u64(h)&u64(0xffff))<<u64(32)); }
+        w1e=(w1e&~u64(0xff00000000))|(u64(yeninesil)<<u64(32));
+        atomik_yaz(p,i64(w0e)); atomik_yaz(adres_ekle(p,8),i64(w1e));
+        atomik_yaz(&c.kilit,s+2); dön 0;
     }
     eğer h==0 && aynı { h=i64(q.hamle); }
     eski_pv:=seç(aynı,(i64(q.bilgi)>>2)&1,0);
-    q.anahtar=kısa; q.hamle=u16(h); q.derinlik=u8(enaz(255,ençok(d,0)));
-    q.puan=i16(seç(puan>TB_KAZANÇ-AZAMİ_KAT,puan+kat,seç(puan < -(TB_KAZANÇ-AZAMİ_KAT),puan-kat,puan)));
-    q.değer=i16(seç(değer==SONSUZ,0,değer));
-    q.bilgi=u8(sınır|(seç(eski_pv!=0 || pv,1,0)<<2)|(seç(değer!=SONSUZ,1,0)<<3)); q.nesil=u8(bellek_nesli&255);
-    eğer kilitli { atomik_yaz(&c.kilit,0); }
+    kp:=seç(puan>TB_KAZANÇ-AZAMİ_KAT,puan+kat,seç(puan < -(TB_KAZANÇ-AZAMİ_KAT),puan-kat,puan));
+    kd:=seç(değer==SONSUZ,0,değer);
+    kb:=sınır|(seç(eski_pv!=0 || pv,1,0)<<2)|(seç(değer!=SONSUZ,1,0)<<3);
+    kder:=enaz(255,ençok(d,0));
+    eğer !kilitli {
+        q.anahtar=kısa; q.hamle=u16(h); q.derinlik=u8(kder);
+        q.puan=i16(kp); q.değer=i16(kd); q.bilgi=u8(kb); q.nesil=u8(yeninesil);
+        dön 0;
+    }
+    w0:=u64(kısa)|((u64(h)&u64(0xffff))<<u64(32))|(u64(i64(i16(kp))&0xffff)<<u64(48));
+    w1:=u64(i64(i16(kd))&0xffff)|(u64(kder&0xff)<<u64(16))|(u64(kb&0xff)<<u64(24))|(u64(yeninesil)<<u64(32));
+    atomik_yaz(p,i64(w0)); atomik_yaz(adres_ekle(p,8),i64(w1));
+    atomik_yaz(&c.kilit,s+2);
 }
 işlev önbellek_puanı(q:Önbellek,kat:i64):i64 {
     p:=i64(q.puan); dön seç(p>TB_KAZANÇ-AZAMİ_KAT,p-kat,seç(p < -(TB_KAZANÇ-AZAMİ_KAT),p+kat,p));
@@ -2243,11 +2537,16 @@ işlev durum_yuvası(a:Arayıcı,kat:i64):adres { dön adres_ekle(a.durumlar,kat
 işlev durum(a:Arayıcı,kat:i64):adres { dön adres_oku(adres(a.durum_adres),kat); }
 
 işlev değerlendir(a:Arayıcı,kat:i64):i64 {
-    yer:adres:=0; k:=a.konum;
+    yer:adres:=0; k:=a.konum; t0:u64:=0; t1:u64:=0; t2:u64:=0; t3:u64:=0; damga:=0;
     eğer a.değer_belleği!=0 {
         yer=adres_ekle(a.değer_belleği,i64(k.anahtar&u64(DEĞER_YUVA-1))*boyut(DeğerYuva));
+        damga=değer_nesli*4+k.sıra+1;
+
+        fil:=k.bit_tahtası[3]|k.bit_tahtası[9]; vezir:=k.bit_tahtası[5]|k.bit_tahtası[11]; şah:=k.bit_tahtası[6]|k.bit_tahtası[12];
+        t0=k.renkler[1]; t1=k.bit_tahtası[1]|k.bit_tahtası[7]|fil|vezir;
+        t2=k.bit_tahtası[2]|k.bit_tahtası[8]|fil|şah; t3=k.bit_tahtası[4]|k.bit_tahtası[10]|vezir|şah;
         e:=gör(DeğerYuva,yer);
-        eğer e.anahtar==k.anahtar && i64(e.sıra)==k.sıra+1 && bellek_karşılaştır(adres(e.tahta),adres(k.tahta),64)==0 { dön i64(e.puan); }
+        eğer i64(e.damga)==damga && e.tahta[0]==t0 && e.tahta[1]==t1 && e.tahta[2]==t2 && e.tahta[3]==t3 { dön i64(e.puan); }
     }
     q:=kat; iken a.durum_geçerli[q]==u8(0) { q-=1; }
     iken q<kat {
@@ -2261,14 +2560,19 @@ işlev değerlendir(a:Arayıcı,kat:i64):i64 {
     }
     puan:=arama_ağ_değeri(a.konum,durum(a,kat));
     eğer yer!=0 {
-        e:=gör(DeğerYuva,yer);e.anahtar=k.anahtar;e.sıra=i32(k.sıra+1);e.puan=i32(puan);
-        bellek_kopyala(adres(e.tahta),adres(k.tahta),64);
+        e:=gör(DeğerYuva,yer); e.tahta[0]=t0; e.tahta[1]=t1; e.tahta[2]=t2; e.tahta[3]=t3; e.damga=i32(damga); e.puan=i32(puan);
     }
     dön puan;
 }
+işlev kat_tehditte(a:Arayıcı,k:Konum,kat:i64):i64 {
+    üst:=k.anahtar&~u64(3); v:=a.şah_önbellek[kat];
+    eğer (v&~u64(1))==(üst|u64(2)) { dön i64(v&u64(1)); }
+    t:=şah_tehditte(k); a.şah_önbellek[kat]=üst|u64(2|t); dön t;
+}
 işlev hamle_yap(a:Arayıcı,k:Konum,h:i64,g:İz,kat:i64) {
     a.taş_izi[kat+1]=i64(k.tahta[kaynak(h)]); a.önceki_av[kat+1]=alınan_taş(k,h); a.önceki[kat+1]=h;
-    ilerle(k,h,g); a.durum_geçerli[kat+1]=u8(0); öngetir(adres_ekle(ortak_bellek,i64(çarp_yüksek_u64(k.anahtar,u64(bellek_kümesi)))*boyut(ÖnbellekKümesi)));
+    ilerle(k,h,g); a.durum_geçerli[kat+1]=u8(0); a.şah_önbellek[kat+1]=u64(0);
+    öngetir(adres_ekle(ortak_bellek,i64(çarp_yüksek_u64(k.anahtar,u64(bellek_kümesi)))*boyut(ÖnbellekKümesi)));
     eğer a.değer_belleği!=0 { öngetir(adres_ekle(a.değer_belleği,i64(k.anahtar&u64(DEĞER_YUVA-1))*boyut(DeğerYuva))); }
 }
 
@@ -2278,7 +2582,7 @@ işlev sessiz_ara(a:Arayıcı,alfa:i64,beta:i64,kat:i64):i64 {
     eğer kat>a.seçilen_derinlik { a.seçilen_derinlik=kat; }
     alfa=ençok(alfa,-MAT+kat); beta=enaz(beta,MAT-kat-1);
     eğer alfa>=beta { dön alfa; }
-    k:=a.konum; tehdit:=şah_tehditte(k); pv:=beta-alfa>1;
+    k:=a.konum; tehdit:=kat_tehditte(a,k,kat); pv:=beta-alfa>1;
     eğer kat>=AZAMİ_KAT-2 { dön seç(tehdit,0,değerlendir(a,kat)); }
     beraber:=arama_beraberliği(a,k);
     eğer !tehdit && beraber { dön 0; }
@@ -2299,18 +2603,48 @@ işlev sessiz_ara(a:Arayıcı,alfa:i64,beta:i64,kat:i64):i64 {
         eğer eniyi>alfa { alfa=eniyi; }
     }
     a.özdeğer[kat]=i32(öz); a.özgeçerli[kat]=u8(!tehdit);
-    l:=yerel(Hamleler);
-    eğer tehdit { yasal_hamleler(k,l); eğer l.adet==0 { dön -MAT+kat; } eğer beraber { dön 0; } }
-    yoksa {
-        yasal_alışlar(k,l);
-
-        eğer l.adet==0 && !şahsız_yasal_var(k) { dön 0; }
-    }
+    l:=kat_listesi(a,kat); şs:=liste_şs(l); şs.hazır=0;
     öneri:=seç(eş && (tehdit || alınan_taş(k,q.hamle)!=0 || hamle_türü(q.hamle)>=4),q.hamle,0);
-    sırala(a,l,öneri,kat,0); g:=a.izler[kat]; eniyi_hamle:=0; sayı:=0;
+    q_önden:=0;
+    eğer tehdit {
+        q_önden=öneri!=0 && tek_hamle_yasal(k,öneri,1);
+        eğer q_önden { l.adet=1; l.hamle[0]=öneri; l.değer[0]=i32(100000000); l.alış[0]=i8(0); l.tehdit=1; }
+        yoksa { yasal_hamleler(k,l); eğer l.adet==0 { dön -MAT+kat; } sırala(a,l,öneri,kat,0); }
+        eğer beraber { dön 0; }
+    } yoksa {
+        q_önden=öneri!=0 && tek_hamle_yasal(k,öneri,0);
+        eğer q_önden {
+            av0:=alınan_taş(k,öneri); ht0:=hamle_türü(öneri); taş0:=i64(k.tahta[kaynak(öneri)]);
+            l.adet=1; l.hamle[0]=öneri; l.değer[0]=i32(100000000);
+            l.alış[0]=i8(seç(av0!=0 && ht0<4 && değişim_bedeli[av0]<değişim_bedeli[tür(taş0)],1,0));
+            l.tehdit=0;
+        } yoksa {
+            taslak_alışlar_aralık(k,l,0);
+            yasallaştır_şahsız_aralık(k,l,0,0,şahsız_çivililer(k));
+
+            eğer l.adet==0 && !şahsız_yasal_var(k) { dön 0; }
+            sırala_alış(a,l,0,0);
+        }
+    }
+    g:=a.izler[kat]; eniyi_hamle:=0; sayı:=0;
     önceki_hedef:=seç(a.önceki[kat]!=0,hedef(a.önceki[kat]),-1);
-    yinele(i:=0;i<l.adet;i+=1) {
-        h:=sıradakini_seç(l,i); av:=alınan_taş(k,h); ht:=hamle_türü(h);
+    yinele(i:=0;i<l.adet || q_önden;i+=1) {
+        eğer q_önden && i==1 {
+            q_önden=0;
+            eğer tehdit {
+                yasal_hamleler(k,l);
+                yinele(j:=0;j<l.adet;j+=1) { eğer i64(l.hamle[j])==öneri { x:=i64(l.hamle[0]); l.hamle[0]=öneri; l.hamle[j]=x; kır; } }
+                sırala(a,l,öneri,kat,1);
+            } yoksa {
+
+                taslak_alışlar_aralık(k,l,0);
+                yasallaştır_şahsız_aralık(k,l,0,0,şahsız_çivililer(k));
+                yinele(j:=0;j<l.adet;j+=1) { eğer i64(l.hamle[j])==öneri { x:=i64(l.hamle[0]); l.hamle[0]=öneri; l.hamle[j]=x; kır; } }
+                sırala_alış(a,l,0,1);
+            }
+        }
+        eğer i>=l.adet { kır; }
+        h:=sıradakini_seç_tembel(k,l,i,0); av:=alınan_taş(k,h); ht:=hamle_türü(h);
         eğer !tehdit && eniyi > -29000 && budama {
             sayı+=1;
             eğer ht<4 && hedef(h)!=önceki_hedef {
@@ -2320,13 +2654,25 @@ işlev sessiz_ara(a:Arayıcı,alfa:i64,beta:i64,kat:i64):i64 {
             }
             eğer i64(l.alış[i])<0 { a.budadı[0]+=1; sürdür; }
         }
+        kh:=kaynak(h); hh:=hedef(h); tt:=tür(i64(k.tahta[kh]));
         hamle_yap(a,k,h,g,kat);
+        eğer ht==0 && şs.hazır && !şs.özel {
+            şv:=(şs.hedef[tt]&bit(hh))!=u64(0) || ((şs.açan&bit(kh))!=u64(0) && (aynı_hat[şs.şah*64+kh]&bit(hh))==u64(0));
+            a.şah_önbellek[kat+1]=(k.anahtar&~u64(3))|u64(2|şv);
+        }
         puan:=-sessiz_ara(a,-beta,-alfa,kat+1);
         geri(k,g);
         eğer atomik_oku(&dur) { dön 0; }
         eğer puan>eniyi {
             eniyi=puan;
-            eğer puan>alfa { eniyi_hamle=h; varyantı_yaz(a,kat,h); eğer puan>=beta { kır; } alfa=puan; }
+            eğer puan>alfa {
+                eniyi_hamle=h;
+                eğer puan>=beta {
+                    eğer pv || mutlak(puan)>=MAT-AZAMİ_KAT { varyantı_yaz(a,kat,h); }
+                    kır;
+                }
+                alfa=puan; varyantı_yaz(a,kat,h);
+            }
         }
     }
     önbelleğe_yaz(a,k,0,seç(eniyi>=beta,2,3),eniyi,eniyi_hamle,ham,kat,tt_pv);
@@ -2334,13 +2680,13 @@ işlev sessiz_ara(a:Arayıcı,alfa:i64,beta:i64,kat:i64):i64 {
 }
 işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
     eğer derinlik<=0 { dön sessiz_ara(a,alfa,beta,kat); }
-    a.uzunluk[kat]=0; l:=yerel(Hamleler);
+    a.uzunluk[kat]=0;
     eğer !düğüm_al(a) { dön 0; }
     eğer kat>a.seçilen_derinlik { a.seçilen_derinlik=kat; }
 
     alfa=ençok(alfa,-MAT+kat); beta=enaz(beta,MAT-kat-1);
     eğer alfa>=beta { dön alfa; }
-    k:=a.konum; tehdit:=şah_tehditte(k); pv:=beta-alfa>1; hariç:=a.hariç[kat];
+    k:=a.konum; tehdit:=kat_tehditte(a,k,kat); pv:=beta-alfa>1; hariç:=a.hariç[kat];
     eğer kat>=AZAMİ_KAT-2 { dön seç(tehdit,0,değerlendir(a,kat)); }
     beraber:=arama_beraberliği(a,k);
     eğer !tehdit && beraber { dön 0; }
@@ -2373,7 +2719,7 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
     güven:=64;
     eğer dinamik_marj && ağ_türü==2 && s8_hata && !tehdit && hariç==0 && !(eş && q.değeri_var!=0) {
 
-        güven=enaz(dm_üst,ençok(dm_alt,64+(i64(i32_oku(durum(a,kat),396))-dm_orta-dm_cp*enaz(1000,mutlak(öz))/100)*dm_eğim/1024));
+        güven=enaz(dm_üst,ençok(dm_alt,64+(i64(i32_oku(durum(a,kat),s8_PQ+12))-dm_orta-dm_cp*enaz(1000,mutlak(öz))/100)*dm_eğim/1024));
     }
     a.özdeğer[kat]=i32(öz); a.özgeçerli[kat]=u8(!tehdit);
     tahmin:=öz;
@@ -2404,13 +2750,16 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
 
         eğer a.önceki[kat]!=0 && öz>=beta && kat>=a.boş_alt_kat && dost_np!=u64(0) && beta > -29000 && tahmin<29000 {
             eski_ep:=k.geçer; eski_anahtar:=k.anahtar; eski_yol:=k.yol; eski_sınır:=k.dönüşsüz;
-            eğer geçer_yasal(k) { k.anahtar^=geçer_anahtarı[k.geçer%8]; }
+            eğer k.geçer>=0 && geçer_yasal(k) { k.anahtar^=geçer_anahtarı[k.geçer%8]; }
             k.geçer=-1; k.sıra=1-k.sıra; k.anahtar^=sıra_anahtarı;
             k.dönüşsüz=k.iz_sayısı; k.yol=döndür_sola(eski_yol,11)^k.anahtar^u64(0x4e554c4c);
 
-            azalt:=ay[5]+derinlik/ay[6]+enaz(3,ençok(0,(tahmin-beta)/ay[7]))+seç(gelişen,1,0);
+            nmp_d:=seç(derinlik<256,i64(nmp_d_tablo[derinlik]),derinlik/ay[6]);
+            nmp_fark:=tahmin-beta; b7:=ay[7];
+            nmp_ek:=seç(b7>0,(nmp_fark>=b7)+(nmp_fark>=2*b7)+(nmp_fark>=3*b7),enaz(3,ençok(0,nmp_fark/b7)));
+            azalt:=ay[5]+nmp_d+nmp_ek+seç(gelişen,1,0);
             a.önceki[kat+1]=0; a.taş_izi[kat+1]=0; a.önceki_av[kat+1]=0;
-            a.izler[kat].adet=0; a.durum_geçerli[kat+1]=u8(0); öngetir(adres_ekle(ortak_bellek,i64(çarp_yüksek_u64(k.anahtar,u64(bellek_kümesi)))*boyut(ÖnbellekKümesi)));
+            a.izler[kat].adet=0; a.durum_geçerli[kat+1]=u8(0); a.şah_önbellek[kat+1]=u64(0); öngetir(adres_ekle(ortak_bellek,i64(çarp_yüksek_u64(k.anahtar,u64(bellek_kümesi)))*boyut(ÖnbellekKümesi)));
             puan:=-ara(a,derinlik-azalt,-beta,-beta+1,kat+1,0);
             k.sıra=1-k.sıra; k.geçer=eski_ep; k.anahtar=eski_anahtar; k.yol=eski_yol; k.dönüşsüz=eski_sınır;
             a.uzunluk[kat]=0;
@@ -2429,10 +2778,20 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
 
         pc_beta:=beta+ay[8]-seç(gelişen,ay[9],0);
         eğer derinlik>=ay[40] && beta<29000 && !(eş && tt_derinlik>=derinlik-3 && tt_puan<pc_beta) {
-            pl:=l; yasal_alışlar(k,pl); sırala(a,pl,seç(tt_alış,öneri,0),kat,0); pg:=a.izler[kat];
-            yinele(i:=0;i<pl.adet;i+=1) {
-                h:=sıradakini_seç(pl,i);
-                eğer h==hariç || !değişim_eşik(k,h,pc_beta-öz) { sürdür; }
+            pl:=kat_listesi(a,kat); pg:=a.izler[kat]; pc_eşik:=pc_beta-öz;
+            pc_önden:=tt_alış && tek_hamle_yasal(k,öneri,0);
+            eğer pc_önden { pl.adet=1; pl.hamle[0]=öneri; pl.değer[0]=i32(100000000); pl.alış[0]=i8(0); }
+            yoksa { taslak_alışlar_aralık(k,pl,0); yasallaştır_şahsız_aralık(k,pl,0,0,şahsız_çivililer(k)); sırala_alış(a,pl,0,0); }
+            yinele(i:=0;i<pl.adet || pc_önden;i+=1) {
+                eğer pc_önden && i==1 {
+                    pc_önden=0;
+                    taslak_alışlar_aralık(k,pl,0); yasallaştır_şahsız_aralık(k,pl,0,0,şahsız_çivililer(k));
+                    yinele(j:=0;j<pl.adet;j+=1) { eğer i64(pl.hamle[j])==öneri { x:=i64(pl.hamle[0]); pl.hamle[0]=öneri; pl.hamle[j]=x; kır; } }
+                    sırala_alış(a,pl,0,1);
+                }
+                eğer i>=pl.adet { kır; }
+                h:=sıradakini_seç_tembel(k,pl,i,0);
+                eğer h==hariç || !değişim_eşik(k,h,pc_eşik) { sürdür; }
                 hamle_yap(a,k,h,pg,kat);
                 puan:=-sessiz_ara(a,-pc_beta,-pc_beta+1,kat+1);
                 eğer puan>=pc_beta && !atomik_oku(&dur) { puan=-ara(a,derinlik-4,-pc_beta,-pc_beta+1,kat+1,!kesen); }
@@ -2456,29 +2815,43 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
         yoksa eğer tt_puan>=beta { uzat=-ay[68]; }
         yoksa eğer kesen { uzat=-ay[69]; }
     }
+    l:=kat_listesi(a,kat); şs:=liste_şs(l); şs.hazır=0;
     önden:=öneri!=0 && öneri!=hariç && tek_hamle_yasal(k,öneri,tehdit);
-    eğer önden { l.adet=1; l.hamle[0]=öneri; l.tehdit=tehdit; } yoksa { yasal_hamleler(k,l); }
-    eğer l.adet==0 { eğer hariç!=0 { dön alfa; } dön seç(tehdit,-MAT+kat,0); }
+    eğer önden { l.adet=1; l.hamle[0]=öneri; l.değer[0]=i32(100000000); l.alış[0]=i8(0); l.tehdit=tehdit; }
+    yoksa {
+        eğer tehdit { yasal_hamleler(k,l); }
+        yoksa { taslak_hamleler(k,l); yasallaştır_şahsız_aralık(k,l,0,0,şahsız_çivililer(k)); }
+        eğer l.adet==0 { eğer hariç!=0 { dön alfa; } dön seç(tehdit,-MAT+kat,0); }
+        sırala(a,l,öneri,kat,0);
+    }
     eğer beraber { dön 0; }
     ilk_alfa:=alfa; eniyi:=-SONSUZ; eniyi_hamle:=0; aranan:=0; sayılan:=0; sessizleri_atla:=0;
-    denenen:=yerel_dizi(i64,64); denenen_sayı:=0; alışlar:=yerel_dizi(i64,64); alış_sayı:=0; şs:=yerel(ŞahSorgusu); şs.hazır=0;
-    sırala(a,l,öneri,kat,0); g:=a.izler[kat];
-    ln_d:=ln_tablosu[enaz(63,derinlik)];
+    denenen_sayı:=0; alış_sayı:=0; g:=a.izler[kat];
+    lmr_taban:=enaz(63,derinlik)*64;
+    lmr_ters:=lmr_all_ters[enaz(255,derinlik)];
+    lmp_sınır:=seç(derinlik<256 && ay[64]!=0,i64(lmp_tablo[gelişen*256+derinlik]),(ay[20]+derinlik*derinlik)*100/seç(gelişen,100,ay[64]));
     yinele(i:=0;i<l.adet || önden;i+=1) {
         eğer önden && i==1 {
-
-            yasal_hamleler(k,l);
-            yinele(j:=0;j<l.adet;j+=1) { eğer i64(l.hamle[j])==öneri { x:=i64(l.hamle[0]); l.hamle[0]=öneri; l.hamle[j]=x; kır; } }
-            sırala(a,l,öneri,kat,1); önden=0;
+            önden=0;
+            eğer tehdit {
+                yasal_hamleler(k,l);
+                yinele(j:=0;j<l.adet;j+=1) { eğer i64(l.hamle[j])==öneri { x:=i64(l.hamle[0]); l.hamle[0]=öneri; l.hamle[j]=x; kır; } }
+            } yoksa {
+                taslak_hamleler(k,l);
+                yasallaştır_şahsız_aralık(k,l,0,0,şahsız_çivililer(k));
+                yinele(j:=0;j<l.adet;j+=1) { eğer i64(l.hamle[j])==öneri { x:=i64(l.hamle[0]); l.hamle[0]=öneri; l.hamle[j]=x; kır; } }
+            }
+            sırala(a,l,öneri,kat,1);
         }
         eğer i>=l.adet { kır; }
-        h:=sıradakini_seç(l,i); eğer h==hariç { sürdür; }
-        av:=alınan_taş(k,h); ht:=hamle_türü(h); sessiz:=av==0 && ht<4; taş:=i64(k.tahta[kaynak(h)]); b:=hedef(h);
+        h:=sıradakini_seç_tembel(k,l,i,0);
+        eğer h==hariç { sürdür; }
+        kh:=kaynak(h); av:=alınan_taş(k,h); ht:=hamle_türü(h); sessiz:=av==0 && ht<4; taş:=i64(k.tahta[kh]); b:=hedef(h);
         eğer sessizleri_atla && sessiz { sürdür; }
-        geçmiş:=seç(sessiz,i64(a.geçmiş[k.sıra*4096+kaynak(h)*64+b])+sürek_oku(a,kat,taş,b),i64(a.alış_geçmişi[alış_yeri(taş,b,av)]));
+        geçmiş:=seç(sessiz,i64(a.geçmiş[k.sıra*4096+kh*64+b])+sürek_oku(a,kat,taş,b),i64(a.alış_geçmişi[alış_yeri(taş,b,av)]));
         sayılan+=1;
 
-        r:=ln_d*ln_tablosu[enaz(63,sayılan)]/seç(sessiz,ay[11],ay[12]);
+        r:=i64(lmr_tablo[seç(sessiz,4096,0)+lmr_taban+enaz(63,sayılan)]);
         r+=ay[13]; eğer !gelişen { r+=ay[14]; }
         eğer kesen { r+=ay[15]+seç(öneri==0,ay[38],0); }
         eğer tt_pv { r-=ay[16]; }
@@ -2494,18 +2867,22 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
             r+=ay[19]*seç(fark < -64, -64, seç(fark > 96, 96, fark));
         }
         eğer !pv && !kesen {
-            r+=r*ay[44]/(256*derinlik+268);
+            pay:=r*ay[44];
+            eğer derinlik<256 {
+                q_all:=i64(çarp_yüksek_u64(u64(seç(pay<0,-pay,pay)),lmr_ters));
+                r+=seç(pay<0,-q_all,q_all);
+            } yoksa { r+=pay/(256*derinlik+268); }
         }
         eğer r<0 { r=0; }
         lmr_d:=ençok(0,derinlik-1-r/1024);
         eğer eniyi > -29000 && !tehdit && dost_np!=u64(0) && budama {
             eğer sessiz {
-                eğer sayılan>=(ay[20]+derinlik*derinlik)*100/seç(gelişen,100,ay[64]) {
+                eğer sayılan>=lmp_sınır {
 
                     sessizleri_atla=1; a.budadı[5]+=1; y:=i+1;
                     yinele(j:=i+1;j<l.adet;j+=1) {
                         hj:=i64(l.hamle[j]);
-                        eğer alınan_taş(k,hj)!=0 || hamle_türü(hj)>=4 { l.hamle[y]=hj; l.değer[y]=i64(l.değer[j]); l.alış[y]=l.alış[j]; y+=1; }
+                        eğer alınan_taş(k,hj)!=0 || hamle_türü(hj)>=4 { l.hamle[y]=hj; l.değer[y]=i32(l.değer[j]); l.alış[y]=i8(l.alış[j]); y+=1; }
                     }
                     l.adet=y; sürdür;
                 }
@@ -2521,13 +2898,22 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
                 eğer lmr_d<=14 && ht<6 && öz+ay[27]+ay[28]*lmr_d+değişim_bedeli[av]+geçmiş/16<=alfa && !şah_sorgusu(k,şs,h) { a.budadı[0]+=1; sürdür; }
             }
         }
-        hamle_yap(a,k,h,g,kat); şah_verdi:=şah_tehditte(k);
+        tt_taş:=tür(taş);
+        hamle_yap(a,k,h,g,kat);
+        şah_verdi:=0; şah_bilindi:=0;
+        eğer ht==0 && şs.hazır && !şs.özel {
+            şah_verdi=(şs.hedef[tt_taş]&bit(b))!=u64(0) || ((şs.açan&bit(kh))!=u64(0) && (aynı_hat[şs.şah*64+kh]&bit(b))==u64(0));
+            a.şah_önbellek[kat+1]=(k.anahtar&~u64(3))|u64(2|şah_verdi);
+            şah_bilindi=1;
+        }
         yeni_d:=derinlik-1+seç(h==öneri,uzat,0); puan:=0;
         eğer budama && derinlik>=2 && aranan>=1 {
+            eğer !şah_bilindi { şah_verdi=kat_tehditte(a,k,kat+1); }
             eğer şah_verdi { r-=ay[37]; }
             eğer r<0 { r=0; }
             d_azalt:=enaz(yeni_d,ençok(1,yeni_d-r/1024));
             puan=-ara(a,d_azalt,-alfa-1,-alfa,kat+1,1);
+
             eğer !atomik_oku(&dur) && puan>alfa && d_azalt<yeni_d {
                 yeni_d+=seç(puan>eniyi+ay[33],1,0);
                 puan=-ara(a,yeni_d,-alfa-1,-alfa,kat+1,!kesen);
@@ -2542,13 +2928,16 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
         eğer puan>eniyi {
             eniyi=puan;
             eğer puan>alfa {
-                eniyi_hamle=h; varyantı_yaz(a,kat,h);
-                eğer puan>=beta { a.kesme[kat]+=1; kır; }
-                alfa=puan;
+                eniyi_hamle=h;
+                eğer puan>=beta {
+                    eğer pv || mutlak(puan)>=MAT-AZAMİ_KAT { varyantı_yaz(a,kat,h); }
+                    a.kesme[kat]+=1; kır;
+                }
+                alfa=puan; varyantı_yaz(a,kat,h);
             }
         }
-        eğer sessiz { eğer denenen_sayı<64 { denenen[denenen_sayı]=h; denenen_sayı+=1; } }
-        yoksa eğer alış_sayı<64 { alışlar[alış_sayı]=h; alış_sayı+=1; }
+        eğer sessiz { eğer denenen_sayı<64 { l.denenen[denenen_sayı]=u16(h); denenen_sayı+=1; } }
+        yoksa eğer alış_sayı<64 { l.alışlar[alış_sayı]=u16(h); alış_sayı+=1; }
     }
     eğer aranan==0 { eğer hariç!=0 { dön alfa; } dön seç(tehdit,-MAT+kat,0); }
     ödül:=enaz(ay[31],ay[30]*derinlik-ay[32]);
@@ -2559,12 +2948,12 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
             geçmiş_yaz(a,k.sıra,eniyi_hamle,ödül); sürek_yaz(a,kat,taş,b,ödül);
             önceki:=a.önceki[kat]; eğer önceki!=0 { a.karşılık[k.sıra*4096+kaynak(önceki)*64+hedef(önceki)]=i32(eniyi_hamle); }
             yinele(j:=0;j<denenen_sayı;j+=1) {
-                d:=denenen[j]; eğer d==eniyi_hamle { sürdür; }
+                d:=i64(l.denenen[j]); eğer d==eniyi_hamle { sürdür; }
                 geçmiş_yaz(a,k.sıra,d,-ödül*ay[65]/100); sürek_yaz(a,kat,i64(k.tahta[kaynak(d)]),hedef(d),-ödül*ay[65]/100);
             }
         } yoksa { alış_geçmişi_yaz(a,taş,b,av,ödül); }
         yinele(j:=0;j<alış_sayı;j+=1) {
-            d:=alışlar[j]; eğer d==eniyi_hamle { sürdür; }
+            d:=i64(l.alışlar[j]); eğer d==eniyi_hamle { sürdür; }
             alış_geçmişi_yaz(a,i64(k.tahta[kaynak(d)]),hedef(d),alınan_taş(k,d),-ödül);
         }
     } yoksa eğer eniyi<=ilk_alfa && kat>=2 && a.önceki[kat]!=0 && a.önceki_av[kat]==0 && hamle_türü(a.önceki[kat])<4 {
@@ -2605,15 +2994,14 @@ işlev kök_hamlesini_ara(a:Arayıcı,i:i64,ilk:i64,n:i64) {
 }
 
 işlev önbellek_doluluğu():i64 {
-    dolu_adet:=0; örnek:=0;
+    dolu_adet:=0; örnek:=0; gn:=bellek_nesli&255;
     yinele(i:=0;i<enaz(250,bellek_kümesi);i+=1) {
         c:=gör(ÖnbellekKümesi,adres_ekle(ortak_bellek,i*boyut(ÖnbellekKümesi)));
-        eğer atomik_kıyas_değiştir(&c.kilit,0,1)!=0 { sürdür; }
         yinele(j:=0;j<3;j+=1) {
-            r:=gör(ÖnbellekKaydı,adres_ekle(adres(c.kayıt),j*16));
-            eğer (i64(r.bilgi)&3)!=0 && i64(r.nesil)==(bellek_nesli&255) { dolu_adet+=1; } örnek+=1;
+            w1:=u64(atomik_oku(adres_ekle(adres(c.kayıt),j*16+8)));
+            bilgi:=i64((w1>>u64(24))&u64(0xff)); nesil:=i64((w1>>u64(32))&u64(0xff));
+            eğer (bilgi&3)!=0 && nesil==gn { dolu_adet+=1; } örnek+=1;
         }
-        atomik_yaz(&c.kilit,0);
     }
     dön seç(örnek==0,0,dolu_adet*1000/örnek);
 }
@@ -2671,23 +3059,21 @@ işlev eniyi_yaz(h:i64) {
     }
     satır_sonu(); kilit_bırak(&çıktı_kilidi);
 }
-işlev rapor_işçisi(veri:adres):i64 {
-    sonraki:=zaman_ns()+500000000;
-    iken !atomik_oku(&rapor_bitsin) {
-        eğer zaman_ns()>=sonraki {
-            kilit_al(&rapor_kilidi);
-            yinele(i:=0;i<son_rapor_sayısı;i+=1) {
-                r:=son_raporlar[i]; arama_bilgisi(son_rapor_derinliği,r.puan,adres(r.yol),r.uzunluk,i+1);
-            }
-            kilit_bırak(&rapor_kilidi);
-            sonraki=zaman_ns()+500000000;
-        }
-        uyu_ns(1000000);
+işlev periyodik_raporla(şimdi:i64) {
+    hedef:=atomik_oku(&sonraki_rapor_ns);
+    eğer hedef<=0 || şimdi<hedef { dön 0; }
+    eğer atomik_kıyas_değiştir(&sonraki_rapor_ns,hedef,şimdi+500000000)!=hedef { dön 0; }
+    kilit_al(&rapor_kilidi);
+    yinele(i:=0;i<son_rapor_sayısı;i+=1) {
+        r:=son_raporlar[i]; arama_bilgisi(son_rapor_derinliği,r.puan,adres(r.yol),r.uzunluk,i+1);
     }
-    dön 0;
+    kilit_bırak(&rapor_kilidi);
 }
 işlev sonucu_beklet() {
-    iken atomik_oku(&sonuç_beklesin) && !atomik_oku(&kullanıcı_durdu) { uyu_ns(1000000); }
+    iken atomik_oku(&sonuç_beklesin) && !atomik_oku(&kullanıcı_durdu) {
+        periyodik_raporla(zaman_ns());
+        uyu_ns(1000000);
+    }
 }
 
 işlev sonuç_işçisini_seç():i64 {
@@ -2820,16 +3206,44 @@ işlev bağımsız_işçi(veri:adres):i64 {
     }
     düğümleri_aktar(a); dön 0;
 }
+işlev havuz_işçisi(veri:adres):i64 {
+    v:=i64(adres_bitleri(veri)); kimlik:=v&65535; görülen:=v>>16;
+    mutex_al(adres(havuz_mutex));
+    iken 1 {
+        iken !havuz_kapat && (havuz_tur==görülen || kimlik>=havuz_hedef) {
+            eğer havuz_tur!=görülen && kimlik>=havuz_hedef { görülen=havuz_tur; }
+            koşul_bekle(adres(havuz_başla_koşul),adres(havuz_mutex));
+        }
+        eğer havuz_kapat { mutex_bırak(adres(havuz_mutex)); kır; }
+        görülen=havuz_tur;
+        mutex_bırak(adres(havuz_mutex));
+        bağımsız_işçi(adres(arayıcılar[kimlik]));
+        mutex_al(adres(havuz_mutex));
+        havuz_kalan-=1;
+        eğer havuz_kalan==0 { koşul_uyandır(adres(havuz_bitti_koşul)); }
+    }
+    dön 0;
+}
 işlev arama_hesapla():i64 {
     eniyi:=seç(kök_sayısı==0,0,kökler[0].hamle);
     eğer arayıcı_kapasite<işçi_sayısı {
-        eğer adres(arayıcılar)!=0 { sil(arayıcılar); }
-        arayıcılar=yeni_dizi(Arayıcı,işçi_sayısı); eğer adres(arayıcılar)==0 { arayıcı_kapasite=0; hata("isci bellegi ayrilamadi"); dön eniyi; }
-        arayıcı_kapasite=işçi_sayısı;
+        yeni_d:=yeni_dizi(Arayıcı,işçi_sayısı);
+        eğer adres(yeni_d)==0 { hata("isci bellegi ayrilamadi"); dön eniyi; }
+        bellek_sıfırla(adres(yeni_d),işçi_sayısı*boyut(Arayıcı));
+        eğer adres(arayıcılar)!=0 {
+            bellek_kopyala(adres(yeni_d),adres(arayıcılar),arayıcı_kapasite*boyut(Arayıcı));
+            sil(arayıcılar);
+        }
+        arayıcılar=yeni_d; arayıcı_kapasite=işçi_sayısı;
     }
     eğer işçi_sayısı>en_çok_işçi { en_çok_işçi=işçi_sayısı; }
 
-    yinele(i:=0;i<işçi_sayısı;i+=1) { bellek_sıfırla(adres(arayıcılar[i]),boyut(Arayıcı)); }
+    yinele(i:=0;i<işçi_sayısı;i+=1) {
+        a:=arayıcılar[i];
+        sıfır_boy:=i64(adres_bitleri(&a.sıfır_sonu))-i64(adres_bitleri(&a.sıfır_başı));
+        bellek_sıfırla(&a.sıfır_başı,sıfır_boy);
+        a.kimlik=i;
+    }
     bitiş:=atomik_oku(&son_zaman);
     eğer bitiş>0 && zaman_ns()>=bitiş { sonucu_beklet(); dön eniyi; }
     eğer kök_sayısı==0 || beraberlik(kök_konum) {
@@ -2840,64 +3254,143 @@ işlev arama_hesapla():i64 {
         kilit_bırak(&rapor_kilidi); sonucu_beklet(); dön eniyi;
     }
     eğer !önbelleği_kur() { hata("ortak TT ayrilamadi"); dön eniyi; }
-    kurulan:=0; başarısız:=0;
+    başarısız:=0;
     yinele(i:=0;i<işçi_sayısı;i+=1) {
-        a:=arayıcılar[i]; a.kimlik=i;
-        a.konum=yeni(Konum); a.kök=yeni_dizi(Kök,kök_sayısı); a.biten=yeni_dizi(Kök,enaz(çoklu_varyant,kök_sayısı));
+        a:=arayıcılar[i];
+        eğer adres(a.konum)==0 { a.konum=yeni(Konum); }
+        eğer adres(a.kök)==0 { a.kök=yeni_dizi(Kök,512); }
+        eğer adres(a.biten)==0 { a.biten=yeni_dizi(Kök,256); }
         a.değer_belleği=0;
 
-        eğer ağ_türü==2 && !s8_hata {
-            a.değer_belleği=hizalı_ayır(DEĞER_YUVA*boyut(DeğerYuva),64);
-            eğer a.değer_belleği!=0 { bellek_sıfırla(a.değer_belleği,DEĞER_YUVA*boyut(DeğerYuva)); }
+        eğer ağ_türü==2 && !s8_hata { a.değer_belleği=kalıcı_değer_al(i); }
+        eğer ağ_türü==2 && s8_toplu_etkin && a.yenileme==0 {
+            a.yenileme=hizalı_ayır(128*boyut(S8Yenileme),64);
+            eğer a.yenileme!=0 { bellek_sıfırla(a.yenileme,128*boyut(S8Yenileme)); }
         }
-        a.yenileme=0;
-        eğer ağ_türü==2 && s8_toplu_etkin { a.yenileme=hizalı_ayır(128*boyut(S8Yenileme),64); eğer a.yenileme!=0 { bellek_sıfırla(a.yenileme,128*boyut(S8Yenileme)); } }
-        a.durumlar=büyük_ayır(DURUM_BOYU*AZAMİ_KAT); a.izler=yeni_dizi(İz,AZAMİ_KAT); a.sürek=kalıcı_sürek_al(i);
-        eğer adres(a.konum)==0 || adres(a.kök)==0 || adres(a.biten)==0 || a.durumlar==0 || adres(a.izler)==0 || a.sürek==0 || (ağ_türü==2 && s8_toplu_etkin && a.yenileme==0) {
-            sil(a.konum); sil(a.kök); sil(a.biten); hizalı_bırak(a.durumlar); hizalı_bırak(a.yenileme); hizalı_bırak(a.değer_belleği); sil(a.izler); başarısız=1; kır;
+        eğer a.durumlar==0 { a.durumlar=büyük_ayır(DURUM_BOYU*AZAMİ_KAT); }
+        eğer adres(a.izler)==0 { a.izler=yeni_dizi(İz,AZAMİ_KAT); }
+        eğer a.listeler==0 { a.listeler=kalıcı_liste_al(i); }
+        eğer a.sürek==0 { a.sürek=kalıcı_sürek_al(i); }
+        eğer adres(a.konum)==0 || adres(a.kök)==0 || adres(a.biten)==0 || a.durumlar==0 || adres(a.izler)==0 || a.listeler==0 || a.sürek==0 || (ağ_türü==2 && s8_toplu_etkin && a.yenileme==0) {
+            başarısız=1; kır;
         }
         bellek_kopyala(adres(a.konum),adres(kök_konum),boyut(Konum));
 
         a.konum.ağ_etkin=0; bellek_kopyala(a.durumlar,adres(kök_konum.öz),DURUM_BOYU); a.durum_geçerli[0]=u8(1);
         yinele(j:=0;j<AZAMİ_KAT;j+=1) { adres_yaz(adres(a.durum_adres),j,durum_yuvası(a,j)); }
         a.kök_iz=kök_konum.iz_sayısı;
-        bellek_kopyala(adres(a.geçmiş),&kalıcı_geçmiş[i*8192],8192*4); bellek_kopyala(adres(a.karşılık),&kalıcı_karşılık[i*8192],8192*4); bellek_kopyala(adres(a.alış_geçmişi),&kalıcı_alış[i*5824],5824*4); bellek_kopyala(adres(a.düzeltme),&kalıcı_düzeltme[i*32768],32768*4); bellek_kopyala(adres(a.düzeltme_tp),&kalıcı_düzeltme_tp[i*32768],32768*4); bellek_kopyala(adres(a.düzeltme_dv),&kalıcı_düzeltme_dv[i*1536],1536*4);
         bellek_kopyala(adres(a.kök),adres(kökler),boyut(Kök)*kök_sayısı);
-        bellek_sıfırla(adres(a.biten),boyut(Kök)*enaz(çoklu_varyant,kök_sayısı)); kurulan+=1;
+        bellek_sıfırla(adres(a.biten),boyut(Kök)*enaz(çoklu_varyant,kök_sayısı));
     }
     eğer başarısız { hata("arama bellegi ayrilamadi"); }
     yoksa {
-        çalışan:=0;
-        yinele(i:=1;i<işçi_sayısı;i+=1) {
-            eğer iş_başlat_boy(&iş_kayıtları[i],işlev_adresi(bağımsız_işçi),adres(arayıcılar[i]),8388608)!=0 { kır; }
-            çalışan+=1;
+        yardımcı:=0;
+        eğer işçi_sayısı>1 {
+            eğer !havuz_hazır {
+                mutex_kur(adres(havuz_mutex)); koşul_kur(adres(havuz_başla_koşul)); koşul_kur(adres(havuz_bitti_koşul));
+                havuz_sayısı=0; havuz_hedef=0; havuz_tur=0; havuz_kalan=0; havuz_kapat=0; havuz_hazır=1;
+            }
+            mutex_al(adres(havuz_mutex));
+            iken havuz_sayısı<işçi_sayısı-1 {
+                yk:=havuz_sayısı+1;
+                eğer iş_başlat_boy(&iş_kayıtları[yk],işlev_adresi(havuz_işçisi),adres_ekle(0,(havuz_tur<<16)|yk),4194304)!=0 { kır; }
+                havuz_sayısı+=1;
+            }
+            aktif:=enaz(işçi_sayısı,havuz_sayısı+1);
+            yardımcı=aktif-1;
+            eğer yardımcı>0 {
+                havuz_hedef=aktif; havuz_kalan=yardımcı; havuz_tur+=1;
+                koşul_hepsini_uyandır(adres(havuz_başla_koşul));
+            }
+            mutex_bırak(adres(havuz_mutex));
         }
         bağımsız_işçi(adres(arayıcılar[0]));
 
         atomik_yaz(&dur,1);
-        yinele(i:=1;i<=çalışan;i+=1) { iş_bekle(&iş_kayıtları[i]); }
+        eğer yardımcı>0 {
+            mutex_al(adres(havuz_mutex));
+            iken havuz_kalan>0 { koşul_bekle(adres(havuz_bitti_koşul),adres(havuz_mutex)); }
+            mutex_bırak(adres(havuz_mutex));
+        }
         kilit_al(&rapor_kilidi); sonuçları_yayımla(1);
         eğer son_rapor_sayısı>0 { eniyi=son_raporlar[0].hamle; } kilit_bırak(&rapor_kilidi);
-    }
-    yinele(i:=0;i<kurulan;i+=1) {
-        a:=arayıcılar[i];
-        bellek_kopyala(&kalıcı_geçmiş[i*8192],adres(a.geçmiş),8192*4); bellek_kopyala(&kalıcı_karşılık[i*8192],adres(a.karşılık),8192*4); bellek_kopyala(&kalıcı_alış[i*5824],adres(a.alış_geçmişi),5824*4); bellek_kopyala(&kalıcı_düzeltme[i*32768],adres(a.düzeltme),32768*4); bellek_kopyala(&kalıcı_düzeltme_tp[i*32768],adres(a.düzeltme_tp),32768*4); bellek_kopyala(&kalıcı_düzeltme_dv[i*1536],adres(a.düzeltme_dv),1536*4);
-        sil(a.konum); sil(a.kök); sil(a.biten); hizalı_bırak(a.durumlar); hizalı_bırak(a.yenileme); hizalı_bırak(a.değer_belleği); sil(a.izler);
     }
     sonucu_beklet(); dön eniyi;
 }
 
 işlev arama_yürüt(veri:adres):i64 {
-    son_rapor_sayısı=0; son_rapor_derinliği=0; son_rapor_seçilen=0; son_rapor_düğümü=0; atomik_yaz(&rapor_bitsin,0);
-    kayıt:=yerel_dizi(u64,1);
-    kuruldu:=iş_başlat_boy(adres(kayıt),işlev_adresi(rapor_işçisi),0,1048576)==0;
+    son_rapor_sayısı=0; son_rapor_derinliği=0; son_rapor_seçilen=0; son_rapor_düğümü=0;
+    atomik_yaz(&sonraki_rapor_ns,arama_başlangıcı+500000000);
     eniyi:=arama_hesapla();
-    atomik_yaz(&rapor_bitsin,1); eğer kuruldu { iş_bekle(adres(kayıt)); }
-
+    atomik_yaz(&sonraki_rapor_ns,0);
     eniyi_yaz(eniyi); dön 0;
 }
+işlev koord_döngüsü(veri:adres):i64 {
+    görülen:=0;
+    mutex_al(adres(koord_mutex));
+    iken 1 {
+        iken koord_tur==görülen && !koord_kapat { koşul_bekle(adres(koord_başla_koşul),adres(koord_mutex)); }
+        eğer koord_kapat && koord_tur==görülen { mutex_bırak(adres(koord_mutex)); kır; }
+        görülen=koord_tur;
+        mutex_bırak(adres(koord_mutex));
+        arama_yürüt(0);
+        mutex_al(adres(koord_mutex));
+        koord_biten=görülen;
+        koşul_hepsini_uyandır(adres(koord_bitti_koşul));
+    }
+    dön 0;
+}
+işlev koord_bekle() {
+    eğer !arama_açık { dön 0; }
+    mutex_al(adres(koord_mutex));
+    iken koord_biten<koord_tur { koşul_bekle(adres(koord_bitti_koşul),adres(koord_mutex)); }
+    mutex_bırak(adres(koord_mutex));
+    arama_açık=0;
+}
 işlev aramayı_durdur() {
-    eğer arama_açık { atomik_yaz(&kullanıcı_durdu,1); atomik_yaz(&dur,1); iş_bekle(adres(arama_kaydı)); arama_açık=0; }
+    eğer arama_açık { atomik_yaz(&kullanıcı_durdu,1); atomik_yaz(&dur,1); koord_bekle(); }
+}
+işlev havuzu_kapat() {
+    aramayı_durdur();
+    eğer koord_hazır {
+        mutex_al(adres(koord_mutex)); koord_kapat=1; koşul_hepsini_uyandır(adres(koord_başla_koşul)); mutex_bırak(adres(koord_mutex));
+        iş_bekle(adres(arama_kaydı));
+        koşul_sil(adres(koord_bitti_koşul)); koşul_sil(adres(koord_başla_koşul)); mutex_sil(adres(koord_mutex));
+        koord_hazır=0;
+    }
+    eğer havuz_hazır {
+        mutex_al(adres(havuz_mutex)); havuz_kapat=1; koşul_hepsini_uyandır(adres(havuz_başla_koşul)); mutex_bırak(adres(havuz_mutex));
+        yinele(i:=1;i<=havuz_sayısı;i+=1) { iş_bekle(&iş_kayıtları[i]); }
+        koşul_sil(adres(havuz_bitti_koşul)); koşul_sil(adres(havuz_başla_koşul)); mutex_sil(adres(havuz_mutex));
+        havuz_hazır=0; havuz_sayısı=0;
+    }
+}
+işlev arayıcıları_bırak() {
+    havuzu_kapat();
+    eğer adres(arayıcılar)!=0 {
+        yinele(i:=0;i<arayıcı_kapasite;i+=1) {
+            a:=arayıcılar[i];
+            eğer adres(a.konum)!=0 { sil(a.konum); }
+            eğer adres(a.kök)!=0 { sil(a.kök); }
+            eğer adres(a.biten)!=0 { sil(a.biten); }
+            eğer a.durumlar!=0 { hizalı_bırak(a.durumlar); }
+            eğer a.yenileme!=0 { hizalı_bırak(a.yenileme); }
+            eğer adres(a.izler)!=0 { sil(a.izler); }
+        }
+        sil(arayıcılar); arayıcılar=dizi_gör(Arayıcı,0); arayıcı_kapasite=0;
+    }
+    eğer kalıcı_sürek!=0 {
+        yinele(i:=0;i<AZAMİ_İŞÇİ;i+=1) { p:=adres_oku(kalıcı_sürek,i); eğer p!=0 { hizalı_bırak(p); } }
+        bellek_bırak(kalıcı_sürek); kalıcı_sürek=0;
+    }
+    eğer kalıcı_liste!=0 {
+        yinele(i:=0;i<AZAMİ_İŞÇİ;i+=1) { p:=adres_oku(kalıcı_liste,i); eğer p!=0 { hizalı_bırak(p); } }
+        bellek_bırak(kalıcı_liste); kalıcı_liste=0;
+    }
+    eğer kalıcı_değer!=0 {
+        yinele(i:=0;i<AZAMİ_İŞÇİ;i+=1) { p:=adres_oku(kalıcı_değer,i); eğer p!=0 { hizalı_bırak(p); } }
+        bellek_bırak(kalıcı_değer); kalıcı_değer=0;
+    }
 }
 işlev aramayı_başlat(s:adres,n:i64) {
     go_başı:=zaman_ns();
@@ -2952,7 +3445,16 @@ işlev aramayı_başlat(s:adres,n:i64) {
     düşünme_süresi=süre; atomik_yaz(&sonuç_beklesin,sonsuz||rakip_sırası);
     eğer süre>=0 && !rakip_sırası { son_zaman=başlangıç_zamanı+ençok(1,süre)*1000000; }
     bellek_kopyala(adres(kök_konum),adres(oyun),boyut(Konum)); atomik_yaz(&kullanıcı_durdu,0); atomik_yaz(&dur,0); atomik_yaz(&düğümler,0);
-    eğer iş_başlat_boy(adres(arama_kaydı),işlev_adresi(arama_yürüt),0,8388608)!=0 { hata("arama iscisi baslatilamadi"); eniyi_yaz(0); dön 0; }
+    eğer !koord_hazır {
+        mutex_kur(adres(koord_mutex)); koşul_kur(adres(koord_başla_koşul)); koşul_kur(adres(koord_bitti_koşul));
+        koord_tur=0; koord_biten=0; koord_kapat=0;
+        eğer iş_başlat_boy(adres(arama_kaydı),işlev_adresi(koord_döngüsü),0,4194304)!=0 {
+            koşul_sil(adres(koord_bitti_koşul)); koşul_sil(adres(koord_başla_koşul)); mutex_sil(adres(koord_mutex));
+            hata("arama iscisi baslatilamadi"); eniyi_yaz(0); dön 0;
+        }
+        koord_hazır=1;
+    }
+    mutex_al(adres(koord_mutex)); koord_tur+=1; koşul_uyandır(adres(koord_başla_koşul)); mutex_bırak(adres(koord_mutex));
     arama_açık=1;
 }
 
@@ -3864,7 +4366,7 @@ işlev ana():i64 {
         eğer metin_eşit(komut,"quit") { kır; }
         yoksa eğer metin_eşit(komut,"uci") {
             kilit_al(&çıktı_kilidi);
-            metin_satırı("id name Tony 0.5"); metin_satırı("id author Cetin Turan");
+            metin_satırı("id name Tony 0.6"); metin_satırı("id author Cetin Turan");
             metin_satırı("option name UCI_Chess960 type check default false");
             metin_satırı("option name Threads type spin default 1 min 1 max 512");
             metin_satırı("option name Hash type spin default 16 min 1 max 16384");
@@ -3897,7 +4399,7 @@ işlev ana():i64 {
         } yoksa eğer metin_eşit(komut,"isready") { kilit_al(&çıktı_kilidi); metin_satırı("readyok"); dosya_boşalt(çıktı); kilit_bırak(&çıktı_kilidi); }
         yoksa eğer metin_eşit(komut,"ucinewgame") { aramayı_durdur(); önbelleği_temizle(); geçmişleri_temizle(); başlangıç(oyun); }
         yoksa eğer metin_eşit(komut,"stop") { aramayı_durdur(); }
-        yoksa eğer metin_eşit(komut,"wait") { eğer arama_açık { iş_bekle(adres(arama_kaydı)); arama_açık=0; } }
+        yoksa eğer metin_eşit(komut,"wait") { koord_bekle(); }
         yoksa eğer metin_eşit(komut,"ponderhit") {
             eğer arama_açık && rakip_sırası {
                 atomik_yaz(&başlangıç_zamanı,zaman_ns());
@@ -3911,7 +4413,8 @@ işlev ana():i64 {
             f:=dosya_aç(adres_oku(sözcük,1),"wb"); eğer f!=0 { dosya_yaz(ağ,s8_BAYT,f); dosya_kapat(f); }
         }
         yoksa eğer metin_eşit(komut,"setoption") {
-            aramayı_durdur();
+
+            aramayı_durdur(); değer_nesli+=1;
             eğer n==4 && metin_eşit(adres_oku(sözcük,1),"name") && metin_eşit(adres_oku(sözcük,2),"Clear") && metin_eşit(adres_oku(sözcük,3),"Hash") { önbelleği_temizle(); sürdür; }
             eğer n==6 && metin_eşit(adres_oku(sözcük,1),"name") && metin_eşit(adres_oku(sözcük,2),"Move") && metin_eşit(adres_oku(sözcük,3),"Overhead") && metin_eşit(adres_oku(sözcük,4),"value") {
                 v:=adres_oku(sözcük,5); sayı:=tamsayı(v);
@@ -3949,6 +4452,7 @@ işlev ana():i64 {
             } yoksa eğer metin_eşit(ad,"Threads") && n==5 && sayı>=1 && sayı<=AZAMİ_İŞÇİ { aramayı_durdur(); işçi_sayısı=sayı; }
             yoksa eğer n==5 && bayt_oku(ad,0)==80 && bayt_oku(ad,1)>=48 && bayt_oku(ad,1)<=57 && tamsayı(adres_ekle(ad,1))>=0 && tamsayı(adres_ekle(ad,1))<96 {
                 ay[tamsayı(adres_ekle(ad,1))]=seç(bayt_oku(v,0)==45,-tamsayı(adres_ekle(v,1)),sayı);
+                ayar_tablolarını_kur();
             }
             yoksa eğer metin_eşit(ad,"SharedNet") && n==5 {
                 eğer ağ!=0 && ağ_türü==2 && ağ_eşli==0 {
@@ -4048,7 +4552,7 @@ işlev ana():i64 {
         yoksa { hata("bilinmeyen komut"); }
         dosya_boşalt(çıktı);
     }
-    aramayı_durdur(); önbelleği_bırak();
+    arayıcıları_bırak(); önbelleği_bırak();
     ağı_bırak();
     dön 0;
 }
