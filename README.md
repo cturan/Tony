@@ -19,21 +19,16 @@ Other builds are on the [releases page](https://github.com/cturan/Tony/releases)
 Lua 5.4 or newer.
 
 ```
-lua t.lua tony.t --arch macos --cpu arm64 --instruction neon --gom netv4.tnns --output tony
-lua t.lua tony.t --arch linux --cpu x86_64 --instruction avx2 --gom netv4.tnns --output tony
-lua t.lua tony.t --arch windows --cpu x86_64 --instruction avx2 --gom netv4.tnns --output tony.exe
+lua t.lua tony.t --arch macos --cpu arm64 --instruction neon --gom netv4.tnns --pgo pgo.uci --output tony
+lua t.lua tony.t --arch linux --cpu x86_64 --instruction avx2 --gom netv4.tnns --pgo pgo.uci --output tony
+lua t.lua tony.t --arch windows --cpu x86_64 --instruction avx2 --gom netv4.tnns --pgo pgo.uci --output tony.exe
 ```
 
 `--instruction` sets the instruction set. x86_64: `sse2`, `avx`, `avx2`, `avx512`, `avx512bw` (or `auto` for runtime dispatch). arm64: `neon`, `scalar`.
 
+`--pgo pgo.uci` runs a short profiling pass to optimize branch layout and hot paths. It requires a macOS or Linux host (cross-compiling Windows with PGO works from Linux x86_64 or macOS with Rosetta 2). When building natively on Windows, omit `--pgo pgo.uci` or use the prebuilt binaries above.
 
-AVX2 Windows build:
-
-```
-lua t.lua tony.t --arch windows --cpu x86_64 --instruction avx2 --gom netv4.tnns --output tony.exe
-```
-
-All release binaries (macOS, Linux, Windows; `neon`, `sse2`, `avx`, `avx2`, `avx512`, `avx512bw`) go to `release/`:
+All release binaries (macOS, Linux, Windows; `neon`, `sse2`, `avx`, `avx2`, `avx512`, `avx512bw`) go to `release/` (built with PGO):
 
 ```
 ./release.sh
