@@ -3075,6 +3075,7 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
 
     eğer budama && (pv || kesen) && ((öneri==0 && derinlik>=ay[70]) || (eş && derinlik>=6 && tt_derinlik+4<derinlik)) { derinlik-=1; }
     dost_np:=k.bit_tahtası[k.sıra*6+2]|k.bit_tahtası[k.sıra*6+3]|k.bit_tahtası[k.sıra*6+4]|k.bit_tahtası[k.sıra*6+5];
+    zz_yok:=(k.bit_tahtası[k.sıra*6+4]|k.bit_tahtası[k.sıra*6+5])!=u64(0) || (dost_np&(dost_np-u64(1)))!=u64(0);
     tt_alış:=öneri!=0 && (alınan_taş(k,öneri)!=0 || hamle_türü(öneri)>=4);
     eğer !pv && !tehdit && hariç==0 && budama {
 
@@ -3092,7 +3093,7 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
         }
 
         nmp_alt:=beta+seç(kesen,ençok(0,115-14*derinlik-seç(gelişen,35,0)),200-12*derinlik);
-        eğer a.önceki[kat]!=0 && öz>=beta && tahmin>=nmp_alt && kat>=a.boş_alt_kat && dost_np!=u64(0) && beta > -29000 && tahmin<29000 {
+        eğer a.önceki[kat]!=0 && öz>=beta && tahmin>=nmp_alt && kat>=a.boş_alt_kat && zz_yok && beta > -29000 && tahmin<29000 {
             eski_ep:=k.geçer; eski_anahtar:=k.anahtar; eski_yol:=k.yol; eski_sınır:=k.dönüşsüz;
             eğer k.geçer>=0 && geçer_yasal(k) { k.anahtar^=geçer_anahtarı[k.geçer%8]; }
             k.geçer=-1; k.sıra=1-k.sıra; k.anahtar^=sıra_anahtarı;
@@ -3553,6 +3554,21 @@ işlev sonuç_işçisini_seç():i64 {
             eğer v.biten_derinlik==derin && v.biten[0].bitti && v.biten[0].kesin && v.biten[0].hamle==r.hamle { oy+=1; }
         }
         eğer seçilen<0 || oy>enoy || (oy==enoy && r.puan>arayıcılar[seçilen].biten[0].puan) { seçilen=i; enoy=oy; }
+    }
+
+    eğer seçilen>=0 {
+        taban_p:=arayıcılar[seçilen].biten[0].puan;
+        eğer taban_p > -29000 && taban_p<29000 {
+            en_fark:=0; sıçrayan:=-1;
+            yinele(i:=0;i<işçi_sayısı;i+=1) {
+                a:=arayıcılar[i]; d_fark:=derin-a.biten_derinlik;
+                eğer a.biten_derinlik<12 || d_fark<=0 { sürdür; }
+                r:=a.biten[0]; eğer !r.bitti || !r.kesin || r.puan>=29000 { sürdür; }
+                fazla:=r.puan-(taban_p+d_fark*35+150);
+                eğer fazla>en_fark { en_fark=fazla; sıçrayan=i; }
+            }
+            eğer sıçrayan>=0 { seçilen=sıçrayan; }
+        }
     }
     dön seçilen;
 }
