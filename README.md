@@ -4,7 +4,13 @@ UCI chess engine in T. The compiler is `t.lua`. It emits native code for macOS a
 
 The engine is `tony.t`: bitboards, Chess960, PVS, quiescence, transposition table, Lazy SMP, Syzygy, Polyglot, NNUE.
 
-Estimated strength is above 3400 Elo, but has not been officially measured. 
+You can find it on Lichess under the name [`TonyEngine`](https://lichess.org/@/TonyEngine)
+
+Here are its current ratings:
+
+[![lichess-rapid](https://lichess-shield.vercel.app/api?username=TonyEngine&format=bullet)](https://lichess.org/@/TonyEngine/perf/bullet)
+[![lichess-rapid](https://lichess-shield.vercel.app/api?username=TonyEngine&format=blitz)](https://lichess.org/@/TonyEngine/perf/blitz)
+[![lichess-rapid](https://lichess-shield.vercel.app/api?username=TonyEngine&format=rapid)](https://lichess.org/@/TonyEngine/perf/rapid)
 
 ## Download
 
