@@ -2868,6 +2868,10 @@ işlev sessiz_ara(a:Arayıcı,alfa:i64,beta:i64,kat:i64):i64 {
     eğer kat>=AZAMİ_KAT-2 { dön seç(tehdit,0,değerlendir(a,kat)); }
     beraber:=arama_beraberliği(a,k); bp:=beraber_puanı(a,kat);
     eğer !tehdit && beraber { dön bp; }
+    eğer budama && kat>0 && !beraber && k.elli>=3 && k.iz_sayısı-4>=k.dönüşsüz && k.geçer<0 && alfa<bp && (bp>=beta || alfa<bp-1) && yakın_tekrar(a,k,tehdit) {
+        eğer bp>=beta { dön bp; }
+        alfa=bp-1;
+    }
     q:=yerel(Önbellek); eş:=önbellekten_oku(k,q);
     tt_puan:=seç(eş,seç(budama,önbellek_puanı_elli(q,kat,k.elli),önbellek_puanı(q,kat)),0); tt_pv:=pv || (eş && q.pv!=0);
     eğer !pv && eş && !beraber {
@@ -2883,7 +2887,7 @@ işlev sessiz_ara(a:Arayıcı,alfa:i64,beta:i64,kat:i64):i64 {
 
             eğer !şahsız_yasal_var(k) { dön 0; }
             eğer budama && mutlak(eniyi)<24000 && mutlak(beta)<24000 { eniyi=(eniyi+beta)/2; }
-            eğer !eş { önbelleğe_yaz(a,k,0,2,eniyi,0,ham,kat,tt_pv); } dön eniyi;
+            dön eniyi;
         }
         eğer eniyi>alfa { alfa=eniyi; }
     }
@@ -3122,8 +3126,8 @@ işlev ara(a:Arayıcı,derinlik:i64,alfa:i64,beta:i64,kat:i64,kesen:i64):i64 {
         }
         eğer öz>=beta { gelişen=1; }
 
-        pc_beta:=beta+ay[8]-seç(gelişen,ay[9],0);
-        pc_d:=derinlik-seç(gelişen,4,3);
+        pc_beta:=beta+ay[8]-seç(gelişen,ay[9],0)-enaz(60,ençok(-60,(öz-beta)/4));
+        pc_d:=ençok(0,derinlik-3-seç(gelişen,1,0)-seç(kesen,1,0));
         eğer derinlik>=3 && beta<29000 && !(eş && mutlak(tt_puan)<29000 && tt_puan<pc_beta) {
             pl:=kat_listesi(a,kat); pg:=a.izler[kat]; pc_eşik:=(pc_beta-öz)*5/12;
             pc_önden:=tt_alış && tek_hamle_yasal(k,öneri,0);
